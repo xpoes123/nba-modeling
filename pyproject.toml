@@ -1,0 +1,18 @@
+[project]
+name = "nba-clv-modeling"
+version = "0.1.0"
+description = "NBA pre-game odds, spreads, and CLV modeling"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pandas>=3.0.1",
+    "python-dotenv>=1.2.2",
+    "requests>=2.32.5",
+]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

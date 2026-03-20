@@ -1,7 +1,47 @@
-.venv/
+# Database
+*.db
+*.db-journal
+
+# pbpstats local cache
+data/
+
+# Python
 __pycache__/
 *.pyc
-.env
-data/
+*.pyo
+*.pyd
 *.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+notebooks/.ipynb_checkpoints/
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Claude Code local settings (permissions are machine-specific)
+.claude/settings.local.json

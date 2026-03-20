@@ -1,298 +1,343 @@
-# NBA Player Rating Engine — Project Spec
+# NBA Player Rating Engine
 
-## Overview
+A hybrid player rating system combining **Regularized Adjusted Plus-Minus (RAPM)** with **Elo-style incremental updates** to produce dynamic, three-dimensional player ratings (Offense, Defense, Pace) for every NBA player.
 
-A hybrid player rating system that combines **Regularized Adjusted Plus-Minus (RAPM)** with **Elo-style incremental updates** to produce dynamic, three-dimensional player ratings (Offense, Defense, Pace). Ratings are computed at the possession level using on-floor lineup data, updated per-possession via Elo mechanics, and re-anchored nightly via ridge regression.
+**The player ratings are the core product.** Downstream applications (spread prediction, live in-game trading on Kalshi/Polymarket, lineup optimization) consume ratings as inputs.
 
-### Design Philosophy
+## Architecture Summary
 
-The player ratings are the core product. Downstream applications (spread prediction, live in-game trading, lineup optimization) consume ratings as inputs — the system is not optimized for any single use case.
+```
+stats.nba.com ──► pbpstats library ──► Local Cache ──► ETL ──► SQLite
+                                                                  │
+                                              ┌───────────────────┤
+                                              ▼                   ▼
+                                         Stint-Level         Possession-Level
+                                         RAPM (Ridge)        Elo Updates
+                                              │                   │
+                                              └───────┬───────────┘
+                                                      ▼
+                                              current_ratings
+                                              (3D per player)
+                                                      │
+                                              ┌───────┼───────────┐
+                                              ▼       ▼           ▼
+                                          Spreads   Live Model   Lineup Opt.
+```
+
+## Tech Stack
+
+- **Python 3.11+**
+- **pbpstats** — play-by-play parsing with lineup attribution (primary data source)
+- **nba_api** — supplementary data (schedules, player metadata)
+- **SQLite** — all processed data and ratings
+- **scikit-learn** — ridge regression
+- **numpy / pandas** — matrix construction, data manipulation
+
+## Data Source
+
+**Primary:** `pbpstats` Python library by dblackrun. Fetches raw play-by-play from stats.nba.com, parses into possessions with full lineup attribution, caches locally.
+
+**Fallback:** REST API at `api.pbpstats.com` — pre-computed lineup/stint aggregates via `get-lineup-opponent-summary`. Sufficient for RAPM but not per-possession Elo.
+
+**Scope:** 2024-25 season (complete). Add 2025-26 after validation.
 
 ---
 
-## Architecture
+## Project Breakdown
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     DATA LAYER                              │
-│                                                             │
-│  pbpstats.com API ──► Possession Parser ──► SQLite DB       │
-│  (pre-parsed possessions, lineups, 2 seasons)               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   RATING ENGINE                             │
-│                                                             │
-│  ┌──────────────┐    ┌──────────────────────────────────┐   │
-│  │  RAPM Layer   │    │  Elo Layer                       │   │
-│  │  (Base Fit)   │    │  (Incremental Updates)           │   │
-│  │               │    │                                  │   │
-│  │  Ridge reg.   │◄───│  Per-possession updates between  │   │
-│  │  30-game      │    │  daily RAPM re-fits              │   │
-│  │  rolling      │    │                                  │   │
-│  │  window       │    │  K-factor split across 10        │   │
-│  │               │────►  players on floor                │   │
-│  │  Re-fit       │    │                                  │   │
-│  │  nightly      │    │  Resets to RAPM baseline after   │   │
-│  └──────────────┘    │  each re-fit                     │   │
-│                       └──────────────────────────────────┘   │
-│                                                             │
-│  Output: 3 ratings per player (Offense, Defense, Pace)      │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 DOWNSTREAM CONSUMERS                        │
-│                                                             │
-│  • Spread / Moneyline Prediction                            │
-│  • Live In-Game Model (Kalshi / Polymarket)                 │
-│  • Lineup Optimization / Rotation Analysis                  │
-└─────────────────────────────────────────────────────────────┘
-```
+This project is built in discrete phases. **Complete each project fully before starting the next.** Each project has clear inputs, outputs, and validation criteria.
 
 ---
 
-## Data Model
+### Project 0: Repo Setup
 
-### Source: pbpstats.com
+**Goal:** Scaffold the repo, install dependencies, create the database.
 
-pbpstats provides pre-parsed possession data with lineup attribution. Covers current season (2025-26) and previous season (2024-25). ~500K possessions per season.
+**Tasks:**
+1. Create the directory structure (see Repo Structure below)
+2. Create `requirements.txt` with: `pbpstats`, `nba_api`, `scikit-learn`, `numpy`, `pandas`
+3. Create `config.py` with all constants (see Config section)
+4. Create `db/schema.sql` with the full schema (see Schema section)
+5. Create `db/init_db.py` — reads `schema.sql` and creates the SQLite database at the configured path
+6. Create `data/` directory for pbpstats cache with `.gitkeep`
+7. Create `.gitignore` — ignore `*.db`, `data/`, `__pycache__/`, `.env`, `*.pyc`, `notebooks/.ipynb_checkpoints/`
 
-### SQLite Schema
+**Validation:** `python db/init_db.py` runs without error and creates the database with all tables.
 
+**Output:** Empty database with schema applied, all directories in place.
+
+---
+
+### Project 1: pbpstats Client
+
+**Goal:** Build a wrapper around the pbpstats library that fetches and parses a single game into structured possession data with lineup attribution.
+
+**Tasks:**
+1. Create `ingestion/pbpstats_client.py` with a function `parse_game(game_id: str) -> dict` that:
+   - Configures pbpstats with `data_directory` pointing to `config.DATA_DIR`
+   - Fetches the game's play-by-play via pbpstats
+   - Returns a dict with:
+     - `game_id`, `season`, `game_date`, `home_team_id`, `away_team_id`
+     - `possessions`: list of dicts, each containing:
+       - `period`, `possession_number` (sequential)
+       - `offense_team_id`, `defense_team_id`
+       - `points_scored` (total points on this possession including FTs)
+       - `fg2a`, `fg2m`, `fg3a`, `fg3m`, `turnovers`, `offensive_rebounds`, `free_throw_points`
+       - `start_time`, `end_time`, `start_type`, `start_score_differential`
+       - `offense_lineup_id` (dash-separated sorted player IDs)
+       - `defense_lineup_id` (dash-separated sorted player IDs)
+       - Individual player IDs: `off_player_1` through `off_player_5`, `def_player_1` through `def_player_5` (sorted)
+2. Create `ingestion/game_list.py` with a function `get_season_game_ids(season: str) -> list[str]` that returns all game IDs for a season using nba_api or pbpstats.
+
+**Important implementation notes:**
+- pbpstats `Possession` objects have `.offense_team_id`, `.defense_team_id` attributes
+- Lineup info is on the possession's `OffenseLineup` and `DefenseLineup` properties
+- Player IDs should be stored as strings, sorted ascending, to create deterministic lineup keys
+- The `offense_lineup_id` is the dash-separated sorted string of 5 player IDs (e.g., `"201566-203507-203954-1629029-1630567"`)
+- Consult pbpstats docs/source for exact attribute names — they may vary between versions
+
+**Validation:** Run `parse_game("0022400001")` (or any known 2024-25 game ID) and verify:
+- Returns possessions with valid lineup data
+- Total points across possessions matches the actual game score
+- Each possession has exactly 5 offensive and 5 defensive players
+- Lineup IDs are deterministic (same game parsed twice → same IDs)
+
+**Output:** Working single-game parser. No database writes yet.
+
+---
+
+### Project 2: ETL Pipeline
+
+**Goal:** Transform parsed game data into database rows (possessions + stints) and insert into SQLite.
+
+**Tasks:**
+1. Create `ingestion/etl.py` with:
+   - `insert_game(db_path: str, parsed_game: dict) -> None`
+     - Inserts into `games` table
+     - Inserts each possession into `possessions` table
+     - Aggregates possessions into 10-man stints and inserts into `stints` table
+     - Upserts player metadata into `players` table
+     - Uses transactions — entire game is atomic (commit or rollback)
+   - `aggregate_stints(possessions: list[dict]) -> list[dict]`
+     - Groups possessions by `(offense_lineup_id, defense_lineup_id)`
+     - For each group: sum possessions count, points_scored, compute seconds_played from time data
+     - Compute `offensive_rating = points_scored / possessions * 100`
+     - Returns list of stint dicts ready for DB insertion
+2. Handle idempotency: if a game already exists in the DB, skip it (check `games` table)
+
+**Validation:** Parse and ETL a single game. Then query:
 ```sql
--- Raw possession data ingested from pbpstats
-CREATE TABLE possessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id TEXT NOT NULL,
-    season TEXT NOT NULL,            -- '2024-25', '2025-26'
-    game_date DATE NOT NULL,
-    period INTEGER NOT NULL,
-    possession_number INTEGER NOT NULL,
-    offense_team_id TEXT NOT NULL,
-    defense_team_id TEXT NOT NULL,
-    points_scored INTEGER NOT NULL,  -- 0, 1, 2, or 3
-    possession_type TEXT,            -- e.g. 'halfcourt', 'transition', 'after_timeout'
-    
-    -- 10 player IDs on the floor (5 offense, 5 defense)
-    off_player_1 TEXT NOT NULL,
-    off_player_2 TEXT NOT NULL,
-    off_player_3 TEXT NOT NULL,
-    off_player_4 TEXT NOT NULL,
-    off_player_5 TEXT NOT NULL,
-    def_player_1 TEXT NOT NULL,
-    def_player_2 TEXT NOT NULL,
-    def_player_3 TEXT NOT NULL,
-    def_player_4 TEXT NOT NULL,
-    def_player_5 TEXT NOT NULL,
+-- Total points should match actual game score
+SELECT offense_team_id, SUM(points_scored) FROM possessions WHERE game_id = ? GROUP BY offense_team_id;
 
-    UNIQUE(game_id, period, possession_number)
-);
+-- Stints should cover all possessions
+SELECT SUM(possessions) FROM stints WHERE game_id = ?;
+-- Should equal total possessions in the game
 
-CREATE INDEX idx_possessions_game_date ON possessions(game_date);
-CREATE INDEX idx_possessions_season ON possessions(season);
-CREATE INDEX idx_possessions_game_id ON possessions(game_id);
+-- Every stint should have exactly 10 unique players
+-- (verify programmatically)
+```
 
--- League averages per season (recalculated nightly)
-CREATE TABLE league_averages (
-    season TEXT PRIMARY KEY,
-    avg_ppp REAL NOT NULL,           -- points per possession
-    avg_pace REAL NOT NULL,          -- possessions per 48 min
-    total_possessions INTEGER NOT NULL
-);
+**Output:** Single-game ETL working end-to-end. Parse → transform → SQLite.
 
--- Player metadata
-CREATE TABLE players (
-    player_id TEXT PRIMARY KEY,
-    player_name TEXT NOT NULL,
-    current_team_id TEXT,
-    position TEXT
-);
+---
 
--- RAPM coefficients (re-fit nightly, 30-game rolling window)
-CREATE TABLE rapm_ratings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    player_id TEXT NOT NULL,
-    as_of_date DATE NOT NULL,        -- date the regression was run
-    season TEXT NOT NULL,
-    window_start_date DATE NOT NULL, -- first game in the 30-game window
-    window_end_date DATE NOT NULL,   -- last game in the 30-game window
-    window_game_count INTEGER NOT NULL,
+### Project 3: Backfill Script
 
-    -- Three rating dimensions
-    offense_rating REAL NOT NULL,    -- ORAPM: marginal PPP vs league avg
-    defense_rating REAL NOT NULL,    -- DRAPM: marginal PPP allowed vs league avg
-    pace_rating REAL NOT NULL,       -- marginal possessions per 48 vs league avg
+**Goal:** Backfill the entire 2024-25 season into the database.
 
-    -- Regression metadata
-    possessions_in_window INTEGER NOT NULL,
-    ridge_alpha REAL NOT NULL,       -- regularization strength used
+**Tasks:**
+1. Create `ingestion/backfill.py` that:
+   - Gets all game IDs for the 2024-25 season
+   - For each game (in chronological order):
+     - Skip if already in `games` table
+     - Parse via `pbpstats_client.parse_game()`
+     - ETL via `etl.insert_game()`
+     - Sleep 2-3 seconds between games (rate limiting for stats.nba.com)
+     - Log progress: `"[423/1230] Game 0022400423 — LAL vs BOS — 198 possessions, 14 stints"`
+   - Handle errors gracefully: log failures, continue to next game, report summary at end
+   - Support resume: since ETL is idempotent, re-running picks up where it left off
+2. After backfill completes, compute and insert league averages:
+   ```sql
+   INSERT INTO league_averages (season, avg_ppp, avg_pace, total_possessions)
+   SELECT
+       season,
+       CAST(SUM(points_scored) AS REAL) / SUM(possessions),
+       AVG(game_pace),  -- need to compute from games table
+       SUM(possessions)
+   FROM stints
+   GROUP BY season;
+   ```
 
-    UNIQUE(player_id, as_of_date),
-    FOREIGN KEY (player_id) REFERENCES players(player_id)
-);
+**Validation:**
+- ~1,200-1,230 games ingested for 2024-25
+- Total possessions across season is ~475K-525K (sanity check)
+- League average PPP is ~1.10-1.15 (sanity check)
+- No games with 0 possessions or 0 stints
+- Run `SELECT COUNT(DISTINCT offense_lineup_id) FROM stints;` — should be several thousand unique lineups
 
-CREATE INDEX idx_rapm_date ON rapm_ratings(as_of_date);
-CREATE INDEX idx_rapm_player ON rapm_ratings(player_id);
+**Output:** Full 2024-25 season in SQLite. Ready for RAPM.
 
--- Live Elo ratings (updated per-possession)
-CREATE TABLE elo_ratings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    player_id TEXT NOT NULL,
-    game_id TEXT NOT NULL,
-    possession_id INTEGER NOT NULL,  -- FK to possessions.id
-    timestamp DATETIME NOT NULL,
+---
 
-    -- Current live ratings (RAPM baseline + Elo delta)
-    offense_elo REAL NOT NULL,
-    defense_elo REAL NOT NULL,
-    pace_elo REAL NOT NULL,
+### Project 4: RAPM Model (Full-Season)
 
-    -- Decomposed components for debugging
-    rapm_offense_base REAL NOT NULL, -- from most recent RAPM fit
-    rapm_defense_base REAL NOT NULL,
-    rapm_pace_base REAL NOT NULL,
-    elo_offense_delta REAL NOT NULL, -- accumulated Elo shift since last RAPM
-    elo_defense_delta REAL NOT NULL,
-    elo_pace_delta REAL NOT NULL,
+**Goal:** Fit ridge regression on stint-level data to produce offense, defense, and pace ratings for every player.
 
-    FOREIGN KEY (player_id) REFERENCES players(player_id),
-    FOREIGN KEY (possession_id) REFERENCES possessions(id)
-);
+**Tasks:**
+1. Create `models/rapm.py` with:
+   - `build_design_matrix(db_path: str, season: str) -> tuple[scipy.sparse.csr_matrix, np.array, np.array, list[str]]`
+     - Query all stints for the season
+     - Build player index: map each unique `player_id` to a column index
+     - For each stint row:
+       - Set `+1` at columns for the 5 offensive player indices
+       - Set `-1` at columns for the 5 defensive player indices
+     - Use `scipy.sparse` — the matrix is very sparse (~10 nonzeros per row out of ~500+ columns)
+     - Weight each row by `sqrt(possessions)`
+     - Target `y_offense`: `(points_scored / possessions - league_avg_ppp) * sqrt(possessions)`
+     - Target `y_defense`: `(points_allowed / possessions - league_avg_ppp) * sqrt(possessions)`
+     - Return: X matrix, y_offense, y_defense, player_id list (column order)
+   - `build_pace_target(db_path: str, season: str) -> np.array`
+     - Target: `(possessions / seconds_played * 2880 - league_avg_pace) * sqrt(possessions)`
+     - Same design matrix X, different target
+   - `fit_rapm(X, y, alpha=5000) -> np.array`
+     - `sklearn.linear_model.Ridge(alpha=alpha, fit_intercept=False)`
+     - Returns coefficient array
+   - `run_full_season_rapm(db_path: str, season: str, alpha=5000) -> None`
+     - Orchestrator: build matrix → fit offense → fit defense → fit pace
+     - Insert results into `rapm_ratings` table
+     - Update `current_ratings` table with `phase = 'rapm_full'`
 
-CREATE INDEX idx_elo_player_time ON elo_ratings(player_id, timestamp);
-CREATE INDEX idx_elo_game ON elo_ratings(game_id);
+**Important design notes:**
+- `fit_intercept=False` because our target is already centered on league average
+- The design matrix encodes offense as +1 and defense as -1, so a single regression produces ORAPM coefficients. For DRAPM, flip the sign convention or fit separately with defense as +1.
+- Actually, the cleanest approach: fit ONE regression where each row's target is the offensive team's margin per possession. The coefficient for a player captures their net impact when on offense (+) or defense (-). Then:
+  - `offense_rating` = coefficient when player is on offense = positive means good offense
+  - `defense_rating` = coefficient when player is on defense = negative means good defense (allows fewer points)
+  - To get both, fit two separate regressions: one for offensive possessions (target = points scored - avg), one for defensive possessions (target = points allowed - avg, sign-flipped so lower is better)
+- Alternative (simpler): fit one regression, coefficient = net impact. Then use on/off splits from the data to decompose. **Start with net RAPM first, decompose later.**
 
--- Snapshot table: current "best" rating per player (for fast lookups)
-CREATE TABLE current_ratings (
-    player_id TEXT PRIMARY KEY,
-    updated_at DATETIME NOT NULL,
+**Validation:**
+- Print top 20 and bottom 20 players by overall rating
+- Sanity check: stars (Jokic, SGA, Luka) should be near the top; end-of-bench guys near zero (not bottom — ridge shrinks them)
+- Coefficient distribution should be roughly normal, centered near 0
+- Correlation with public RAPM sources > 0.7
 
-    -- Composite ratings (RAPM base + Elo delta)
-    offense REAL NOT NULL,
-    defense REAL NOT NULL,
-    pace REAL NOT NULL,
+**Output:** `rapm_ratings` and `current_ratings` populated for all players in 2024-25.
 
-    -- Overall (offense - defense, higher = better)
-    overall REAL GENERATED ALWAYS AS (offense - defense) STORED,
+---
 
-    FOREIGN KEY (player_id) REFERENCES players(player_id)
-);
+### Project 5: Rolling-Window RAPM
+
+**Goal:** Replace full-season RAPM with a 30-game rolling window, re-fit nightly.
+
+**Tasks:**
+1. Add to `models/rapm.py`:
+   - `get_player_window(db_path: str, player_id: str, as_of_date: str, window_size=30) -> tuple[date, date]`
+     - Find the last 30 games this player appeared in, on or before `as_of_date`
+     - Return `(window_start_date, window_end_date)`
+   - `build_rolling_design_matrix(db_path: str, season: str, as_of_date: str, window_size=30)`
+     - Compute the union window: earliest `window_start_date` across all active players
+     - Query stints where `game_date >= union_start AND game_date <= as_of_date`
+     - Same matrix construction as full-season
+   - `run_rolling_rapm(db_path: str, season: str, as_of_date: str, alpha=5000)`
+     - Fit and store rolling RAPM ratings with window metadata
+2. Create `pipeline/nightly_job.py`:
+   - Fetch today's games via `ingest_daily.py`
+   - Parse and ETL each game
+   - Recalculate league averages
+   - Run rolling RAPM as of today
+   - Update `current_ratings` with `phase = 'rapm_rolling'`
+
+**Validation:**
+- Rolling ratings should be correlated with but not identical to full-season ratings
+- Players who had a strong recent stretch should rate higher in rolling vs full-season
+- Window metadata in `rapm_ratings` should show correct date ranges
+
+**Output:** Nightly-updatable rolling RAPM pipeline.
+
+---
+
+### Project 6: Elo Layer
+
+**Goal:** Add per-possession Elo updates between RAPM re-fits.
+
+**Tasks:**
+1. Create `models/elo.py`:
+   - `sigmoid(x: float) -> float` — standard logistic function
+   - `elo_update(possession: dict, current_elos: dict, league_avg_ppp: float, K=2.0) -> dict`
+     - Compute expected outcome from current Elo ratings of 10 players
+     - Compute surprise (actual - expected)
+     - Return updated Elo deltas for all 10 players
+   - `replay_game_elo(db_path: str, game_id: str, current_elos: dict, league_avg_ppp: float, K=2.0) -> dict`
+     - Fetch all possessions for game in chronological order
+     - Apply Elo updates sequentially
+     - Apply game-level pace Elo update after all possessions
+     - Store Elo snapshots in `elo_ratings` table
+     - Return updated elos
+   - `reset_elo_to_rapm(db_path: str) -> dict`
+     - Load latest RAPM ratings
+     - Return elo dict with all deltas = 0, bases = RAPM values
+2. Create `models/composite.py`:
+   - `update_current_ratings(db_path: str) -> None`
+     - For each player: `offense = rapm_base + elo_delta`, same for defense, pace
+     - Update `current_ratings` with `phase = 'elo'`
+3. Integrate into `nightly_job.py`:
+   - After RAPM re-fit: reset Elo → replay today's games → update composite ratings
+
+**Validation:**
+- Elo deltas should be small relative to RAPM base (< 10% magnitude)
+- After a blowout win, offensive players' Elo should tick up, defensive opponents' should tick down
+- Calibration plot: bin possessions by predicted probability, plot actual scoring rate. Should be roughly diagonal.
+
+**Output:** Full hybrid rating system: RAPM base + Elo adjustments, updated per-possession.
+
+---
+
+## Config
+
+```python
+# config.py
+import os
+
+# Paths
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(PROJECT_ROOT, "db", "nba_ratings.db")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+SCHEMA_PATH = os.path.join(PROJECT_ROOT, "db", "schema.sql")
+
+# Seasons
+INITIAL_SEASON = "2024-25"
+SEASON_TYPE = "Regular Season"
+
+# RAPM
+RIDGE_ALPHA = 5000
+ROLLING_WINDOW_GAMES = 30
+
+# Elo
+ELO_K_OFFENSE_DEFENSE = 2.0
+ELO_K_PACE = 1.0
+
+# Ingestion
+BACKFILL_SLEEP_SECONDS = 2.5
 ```
 
 ---
 
-## Model Design
+## Schema
 
-### 1. RAPM Layer (Base Fit)
+See `db/schema.sql` — full schema is in the spec document. Key tables:
 
-**Purpose:** Produce statistically rigorous player ratings by isolating individual contribution from lineup context.
-
-**Method:** Ridge regression on possession-level data.
-
-**Design matrix (per possession):**
-
-For ~N possessions and ~P unique players:
-- Matrix `X` is N × P
-- For each possession row:
-  - `+1` for each offensive player on floor
-  - `-1` for each defensive player on floor
-  - `0` for all other players
-- Target vector `y`:
-  - **Offense/Defense model:** `points_scored - league_avg_ppp`
-  - **Pace model:** `possessions_in_game / 48 * minutes_duration - league_avg_pace` (aggregated at the game-stint level)
-
-**Rolling window:** 30 games per player (not calendar-based). A player's window includes the last 30 *team games in which they appeared*. This means different players may have slightly different window boundaries.
-
-**Re-fit cadence:** Nightly, after all games complete.
-
-**Regularization:** Ridge (L2). Hyperparameter `alpha` selected via cross-validation on first build, then held constant unless performance degrades. Starting point: `alpha = 5000` (typical for RAPM at possession level).
-
-**Cold start:** New players initialize at 0 (league average) for all three dimensions. Ridge naturally shrinks low-sample players toward zero.
-
-**Output:** Three coefficients per player: `offense_rating`, `defense_rating`, `pace_rating`.
-
-### 2. Elo Layer (Incremental Updates)
-
-**Purpose:** Allow ratings to drift between nightly RAPM re-fits, capturing within-day and within-game momentum.
-
-**Update rule (per possession):**
-
-```
-For each player on the floor:
-    expected = sigmoid(sum of offense Elo ratings - sum of defense Elo ratings)
-    actual   = 1 if points_scored > league_avg_ppp else 0
-    surprise = actual - expected
-
-    For offensive players:
-        elo_offense_delta += K * surprise / 5
-    For defensive players:
-        elo_defense_delta -= K * surprise / 5
-```
-
-Division by 5 distributes credit equally among the 5 players on each side.
-
-**K-factor:** Start with `K = 2.0` (small, since these are micro-adjustments on top of a regression baseline). Tune empirically.
-
-**Reset:** After each nightly RAPM re-fit, Elo deltas reset to 0 and the RAPM base updates.
-
-**Pace Elo:** Updated at the game level (not per-possession), since individual possession duration is noisy. After each game, compare actual game pace to expected pace given the 10-man rotation, and distribute the surprise.
-
-### 3. Composite Rating
-
-```
-player.offense = rapm.offense_rating + elo.offense_delta
-player.defense = rapm.defense_rating + elo.defense_delta
-player.pace    = rapm.pace_rating    + elo.pace_delta
-player.overall = player.offense - player.defense
-```
-
-Higher offense = better (adds more points).
-Lower defense = better (allows fewer points), so `overall = offense - defense` means higher = better net impact.
-
----
-
-## Pipeline
-
-### Nightly Job (runs after last game completes)
-
-```
-1. INGEST
-   - Fetch new game possessions from pbpstats for today's games
-   - Upsert into possessions table
-   - Update player metadata
-
-2. COMPUTE LEAGUE AVERAGES
-   - Recalculate season-level avg_ppp and avg_pace
-   - Update league_averages table
-
-3. RAPM FIT
-   - For each player with >= 1 game in the last 30 team games:
-     a. Build design matrix from possessions in their window
-     b. Run ridge regression (offense/defense model)
-     c. Run ridge regression (pace model)
-     d. Store coefficients in rapm_ratings
-
-4. RESET ELO
-   - For all players: set elo deltas to 0, update RAPM base
-   - Update current_ratings snapshot table
-
-5. REPLAY ELO (for today's games)
-   - For each game played today, replay possessions chronologically
-   - Apply Elo updates per possession
-   - Store final elo_ratings state
-   - Update current_ratings snapshot
-```
-
-### Live Game Processing (future — for Kalshi/Polymarket)
-
-```
-1. Stream live play-by-play (source TBD — pbpstats may have delay)
-2. Parse possessions as they complete
-3. Apply Elo updates in real-time
-4. Feed updated ratings into live win probability / spread model
-```
+| Table | Purpose | Phase |
+|-------|---------|-------|
+| `possessions` | Per-possession data with 10-man lineups | P1 (populated), P6 (consumed by Elo) |
+| `stints` | Aggregated 10-man matchup data | P1 (populated), P4 (consumed by RAPM) |
+| `games` | Game metadata, used for idempotency | P1 |
+| `players` | Player metadata | P1 |
+| `league_averages` | Season-level PPP and pace | P3 |
+| `rapm_ratings` | RAPM coefficients with window metadata | P4-5 |
+| `elo_ratings` | Per-possession Elo snapshots | P6 |
+| `current_ratings` | Best current rating per player | P4+ |
 
 ---
 
@@ -301,105 +346,47 @@ Lower defense = better (allows fewer points), so `overall = offense - defense` m
 ```
 nba-rating-engine/
 ├── README.md
-├── CLAUDE.md                    # AI assistant context
+├── CLAUDE.md
 ├── requirements.txt
-├── config.py                    # Constants: seasons, alpha, K-factor, etc.
+├── config.py
+├── .gitignore
 ├── db/
-│   ├── schema.sql               # Full schema from above
-│   ├── init_db.py               # Create tables
-│   └── nba_ratings.db           # SQLite database (gitignored)
+│   ├── schema.sql
+│   ├── init_db.py
+│   └── nba_ratings.db          (gitignored)
+├── data/                        (gitignored — pbpstats cache)
+│   └── .gitkeep
 ├── ingestion/
-│   ├── pbpstats_client.py       # Fetch possession data from pbpstats
-│   ├── ingest_season.py         # Backfill full season
-│   └── ingest_daily.py          # Nightly incremental fetch
+│   ├── __init__.py
+│   ├── pbpstats_client.py
+│   ├── game_list.py
+│   ├── etl.py
+│   ├── backfill.py
+│   └── ingest_daily.py
 ├── models/
-│   ├── rapm.py                  # Ridge regression: build matrix, fit, store
-│   ├── elo.py                   # Elo update logic: per-possession, reset
-│   └── composite.py             # Combine RAPM + Elo into current ratings
+│   ├── __init__.py
+│   ├── rapm.py
+│   ├── elo.py
+│   └── composite.py
 ├── pipeline/
-│   ├── nightly_job.py           # Orchestrator: ingest → RAPM → Elo
-│   └── backfill.py              # One-time: process historical seasons
+│   ├── __init__.py
+│   ├── nightly_job.py
+│   └── phase1_full_season.py
 ├── analysis/
-│   ├── validate_ratings.py      # Sanity checks, known-player spot checks
-│   ├── calibration.py           # Elo calibration plots, K-factor tuning
-│   └── notebooks/               # Jupyter exploration
-│       └── rapm_exploration.ipynb
-├── downstream/                  # Future: consumers of the ratings
+│   ├── validate_ratings.py
+│   ├── calibration.py
+│   └── notebooks/
+│       ├── rapm_exploration.ipynb
+│       └── elo_tuning.ipynb
+├── downstream/
+│   ├── __init__.py
 │   ├── spread_model.py
 │   ├── live_model.py
 │   └── lineup_optimizer.py
 └── tests/
+    ├── __init__.py
+    ├── test_etl.py
     ├── test_rapm.py
     ├── test_elo.py
     └── test_pipeline.py
 ```
-
----
-
-## Implementation Plan
-
-### Phase 1: Data Pipeline (Week 1)
-- [ ] Set up repo, SQLite schema, config
-- [ ] Build pbpstats client (fetch possessions + lineups)
-- [ ] Backfill 2024-25 full season
-- [ ] Backfill 2025-26 season through current date
-- [ ] Validate data: spot-check possession counts, lineup integrity
-
-### Phase 2: RAPM Model (Week 2)
-- [ ] Build design matrix constructor from possessions table
-- [ ] Implement rolling 30-game window logic
-- [ ] Ridge regression for offense/defense model
-- [ ] Ridge regression for pace model
-- [ ] Backfill historical RAPM ratings for both seasons
-- [ ] Validation: compare top/bottom players to public RAPM sources
-
-### Phase 3: Elo Layer (Week 3)
-- [ ] Implement per-possession Elo update function
-- [ ] Implement game-level pace Elo update
-- [ ] Build Elo replay for historical games
-- [ ] Nightly reset + RAPM re-anchor logic
-- [ ] Calibration: tune K-factor, plot expected vs actual
-- [ ] Composite rating assembly + current_ratings snapshot
-
-### Phase 4: Nightly Pipeline (Week 4)
-- [ ] Nightly orchestrator (ingest → RAPM → Elo)
-- [ ] Scheduling (cron or similar)
-- [ ] Monitoring: alerts on data freshness, rating drift
-- [ ] current_ratings API or export for downstream use
-
-### Phase 5: Downstream Applications (Week 5+)
-- [ ] Spread / moneyline projection from lineup-weighted ratings
-- [ ] Integration with live model (Matthew's Brownian motion work)
-- [ ] Lineup optimization tooling
-
----
-
-## Key Parameters
-
-| Parameter | Initial Value | Notes |
-|-----------|--------------|-------|
-| Ridge alpha | 5000 | Typical for possession-level RAPM; CV to tune |
-| Elo K-factor (offense/defense) | 2.0 | Small — micro-adjustments on regression base |
-| Elo K-factor (pace) | 1.0 | Game-level updates, less reactive |
-| Rolling window | 30 games | Per-player, not calendar |
-| Seasons in scope | 2024-25, 2025-26 | ~1M total possessions |
-| Cold start rating | 0.0 | League average for all dimensions |
-| Expected points baseline | League avg PPP per season | Recalculated nightly |
-
----
-
-## Open Questions & Future Considerations
-
-1. **pbpstats API stability** — Need to verify rate limits, data freshness (how quickly do new games appear?), and whether historical data access requires any auth.
-
-2. **Live data source for in-game Elo** — pbpstats likely has a delay. May need to supplement with nba_api live play-by-play or another real-time source for the Kalshi/Polymarket use case.
-
-3. **Cross-season continuity** — Should a player's RAPM window span the season boundary? Current design: no, each season is independent. Could add a decay factor to carry ratings across seasons.
-
-4. **Bayesian priors** — Ridge keeps things simple, but if low-minute player ratings are noisy, informing priors with box score stats (BPM, usage rate) is a natural upgrade path.
-
-5. **Pace-efficiency correlation** — The decomposed model assumes some independence. If this introduces systematic bias, a correction term or joint model may be needed.
-
-6. **K-factor scheduling** — Could vary K by context: higher for early season (more uncertainty), lower for playoffs. Also could be player-specific (higher K for players with fewer possessions).
-
-7. **Defensive rating attribution** — On-floor binary is a known limitation for defense, where individual impact is harder to isolate. Future upgrade: weight by proximity/matchup data if tracking data becomes accessible.

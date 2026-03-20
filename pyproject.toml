@@ -1,17 +1,20 @@
 [project]
-name = "nba-clv-modeling"
+name = "nba-rating-engine"
 version = "0.1.0"
-description = "NBA pre-game odds, spreads, and CLV modeling"
+description = "NBA Player Rating Engine — hybrid RAPM + Elo system producing 3D player ratings"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
-    "pandas>=3.0.1",
-    "python-dotenv>=1.2.2",
-    "requests>=2.32.5",
+    "pbpstats>=0.10.0",
+    "nba_api>=1.4.1",
+    "scikit-learn>=1.5.0",
+    "scipy>=1.13.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
 ]
 
 [tool.uv]
-package = true
+package = false
 
 [build-system]
 requires = ["hatchling"]

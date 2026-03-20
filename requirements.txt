@@ -1,0 +1,6 @@
+pbpstats
+nba_api
+scikit-learn
+scipy
+numpy
+pandas

@@ -154,6 +154,49 @@ These are implemented as Claude Code slash commands in `.claude/commands/`. Use 
 ## Memory & Session Continuity
 
 - `memory/current-status.md` is the source of truth for session state: current phase (P0–P6), last validated milestone, known issues, and next steps
-- **Before ending any session**, update `memory/current-status.md` with what was completed, what's still in progress, and what to do next
+- **Before ending any session**, always update `memory/current-status.md` with:
+  - Current phase and whether it's complete
+  - Everything completed this session
+  - Any key design decisions that were made
+  - Known issues or blockers
+  - Exact next steps
 - **Start every session with `/fresh-eyes`** to re-orient before writing any code
 - If the DB has data, run `/check-db` before writing new code that queries it — the schema or contents may have changed since the last session
+- **Do not rely on conversation history across sessions** — write everything important to `memory/current-status.md` so it survives a fresh context
+
+## Committing & Pushing
+
+**Commit early and often — every independently completable unit of work gets its own commit.**
+
+Treat each of the following as a commit boundary:
+- A new file is working and tested (e.g., `pbpstats_client.py` parses a game correctly)
+- A validation query passes (schema init, backfill progress checkpoint, RAPM sanity check)
+- A bug is fixed and verified
+- A project phase (P0–P6) is fully validated
+
+**Commit rules:**
+- **Run `pytest tests/` before committing** any changes to `ingestion/` or `models/`
+- Stage specific files by name — never `git add -A` or `git add .` blindly
+- Write descriptive commit messages: what changed and why, not just "update"
+- **Push after every commit** — do not let commits accumulate locally. `git push` immediately after `git commit`
+- Never commit `db/nba_ratings.db` or anything under `data/` — these are local artifacts, not source
+
+**When in doubt, commit.** A commit is cheap; lost work is not.
+
+## Ask Don't Assume
+
+When there is any ambiguity — about requirements, design choices, or intended behavior — **stop and ask David before writing code**. Do not make assumptions and proceed. Specifically:
+
+- **If the spec is underspecified**, ask. Don't pick an arbitrary implementation and document it after the fact.
+- **If two approaches are both reasonable**, present them and ask which to use. Don't silently choose one.
+- **If a project's inputs or outputs are unclear**, clarify before starting. The projects are sequential — a wrong assumption in P1 propagates through P2–P6.
+- **If something unexpected is found** (e.g., pbpstats attribute names differ from the README, a game has malformed data), surface it immediately rather than working around it silently.
+- **If a design decision has downstream consequences** (schema changes, API contracts, model assumptions), flag it and confirm before locking it in.
+
+The cost of a 30-second clarification question is far lower than the cost of building on a wrong assumption.
+
+This applies especially to:
+- pbpstats API surface (attribute names, object structure) — check the source/docs and ask if unclear
+- RAPM matrix construction details (sign conventions, weighting, intercept handling)
+- Elo update formulas (expected value definition, outcome normalization)
+- Any change that would require modifying `db/schema.sql` after P0

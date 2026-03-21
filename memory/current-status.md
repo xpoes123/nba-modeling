@@ -123,7 +123,18 @@
 - predictions: 6 rows (2026-03-22 slate, first predictions run)
 
 ## Next Steps
-- Improve lineup redistribution after injury removal (normalize shares to 1.0)
-- Track prediction accuracy: after games play out, compare predicted vs actual margin
-- Build CLV tracking: compare our predictions to closing lines
-- See memory/model-analysis.md for full improvement backlog
+1. **Ridge regularization on team HCA dummies** — recover val corr regression from 0.470 → ~0.535.
+   Two-stage fit: raw_margin + B2B unpenalized, 30 team dummies regularized with Ridge.
+   File: `downstream/calibration.py`
+2. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
+   to shrink predictions toward zero for depleted teams (closes large injury-game edges).
+3. **Outcome tracking pipeline** — compare predictions in DB to actual final scores.
+4. See `memory/model-analysis.md` for full improvement backlog.
+
+## Completed This Session (2026-03-21)
+- Possession share redistribution fix: `_build_minutes_profile_from_db()` now scales remaining
+  players' minutes by `1/coverage_ratio` after injury exclusion. Mean-neutral (shares_from_minutes
+  already normalizes in simulate_game), but semantically correct and std_minutes now proportional.
+  64/64 tests pass (5 new in tests/test_predictions.py).
+- Added NBA Domain Knowledge Rules to CLAUDE.md: always backtest, never rely on Claude's internal
+  NBA knowledge, ask David for sanity checks on domain-specific questions.

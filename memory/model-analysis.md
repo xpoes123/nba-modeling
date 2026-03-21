@@ -71,8 +71,10 @@ though they won't play. We remove injured players, but we don't redistribute the
 to backups. This means injured teams look weaker in our model than they should
 (total lineup weight is lower), which may actually help accuracy but is architecturally wrong.
 
-**Fix to consider:** After removing injured players, normalize remaining players' shares
-back to 1.0 (add their possession share redistributed proportionally to remaining players).
+**Fix applied (2026-03-21):** `_build_minutes_profile_from_db()` now scales all remaining
+players' minutes by `1/coverage_ratio`. This restores the MinutesProfile total to ~240.
+Mean predictions are unchanged (shares_from_minutes normalizes in every simulation draw),
+but std_minutes are now proportional to each player's expanded role. 64/64 tests pass.
 
 ### 3. Lineup estimation from possession history may lag real rotations
 We use the last 15 games' possession data. If a team changed rotations recently (trade,
@@ -133,8 +135,12 @@ many injuries, our model's possession-share redistribution may be inaccurate.
    tune X on val set. The raw_margin and B2B columns should NOT be regularized (only team
    dummies) — requires `RidgeCV` with a custom penalty mask or a two-stage fit.
 
-2. **Redistribute possession shares after injury removal** — normalize remaining players
-   to 100% so lineup weight doesn't drop when stars are out.
+2. ~~**Redistribute possession shares after injury removal**~~ — **DONE (2026-03-21)**.
+   `_build_minutes_profile_from_db()` now scales remaining players' synthetic minutes by
+   `1/coverage_ratio` after injury exclusion, so MinutesProfile total stays ~240.
+   **Note:** This is mean-neutral (predicted spreads unchanged) because `shares_from_minutes()`
+   inside `simulate_game()` already normalizes. The fix makes the representation semantically
+   correct and std_minutes proportional to actual usage.
 
 3. **Position-adjusted replacement** — when a star is out, give their possessions to
    their typical backup (from historical substitution patterns), not just normalize evenly.

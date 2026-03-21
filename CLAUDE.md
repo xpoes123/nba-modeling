@@ -202,3 +202,27 @@ This applies especially to:
 - RAPM matrix construction details (sign conventions, weighting, intercept handling)
 - Elo update formulas (expected value definition, outcome normalization)
 - Any change that would require modifying `db/schema.sql` after P0
+
+## NBA Domain Knowledge Rules
+
+Claude's internal NBA knowledge is unreliable for this project — player rosters, injuries, team
+compositions, and recent performance are outside the training cutoff or simply wrong. Follow these
+rules strictly:
+
+- **Never rely on Claude's own NBA knowledge** to validate predictions, player ratings, or model
+  outputs. Don't say "SGA should be top-5" or "the Lakers are a good home team" based on internal
+  priors — these may be stale or wrong.
+- **Always backtest before concluding anything about model quality.** If a prediction looks
+  surprising or a rating looks off, run `downstream/backtest.py` against recent dates rather than
+  judging by intuition.
+  ```bash
+  PYTHONPATH=. uv run python downstream/backtest.py --start YYYY-MM-DD --end YYYY-MM-DD
+  ```
+- **Ask David for sanity checks on NBA-specific questions.** If evaluating whether a player
+  rating, team matchup, or injury-adjusted prediction is reasonable, ask David rather than
+  reasoning from internal knowledge. Examples:
+  - "Does it make sense that X team is being rated as a -8 home underdog here?"
+  - "Is this player typically a starter or bench player this season?"
+  - "Is this edge likely due to a real injury or a data gap?"
+- **The DB is ground truth for lineups and usage** — possession history in `possessions` table
+  is more reliable than any internal knowledge about how teams use players.

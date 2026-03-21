@@ -268,6 +268,18 @@ def _build_minutes_profile_from_db(
         result[pid] = (mean_share * 240, std_share * 240)
 
     coverage_ratio = available_weight / total_weight if total_weight > 0 else 1.0
+
+    # Redistribute injured players' minutes proportionally to the healthy roster.
+    # When coverage_ratio < 1.0, scale each player's synthetic minutes up by 1/coverage_ratio
+    # so the MinutesProfile total stays ~240 (= 5 players × 48 min).
+    # shares_from_minutes() in simulate_game would normalize anyway, but this keeps
+    # synthetic minutes semantically correct and std_minutes proportional to actual usage.
+    if 0.0 < coverage_ratio < 1.0:
+        scale = 1.0 / coverage_ratio
+        result = MinutesProfile(
+            {pid: (mean_m * scale, std_m * scale) for pid, (mean_m, std_m) in result.items()}
+        )
+
     logger.debug(
         "Team %s: %d players, coverage=%.1f%%", team_id, len(result), coverage_ratio * 100
     )

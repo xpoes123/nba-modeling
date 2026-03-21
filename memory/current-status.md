@@ -1,7 +1,7 @@
 # Current Status
 
 ## Current Phase
-**P6 — COMPLETE** → all phases done (P0–P6)
+**P7 — COMPLETE** → P0–P7 done; daily prediction engine running
 
 ## Completed
 - **P0**: config.py, db/schema.sql, db/init_db.py — validated
@@ -19,6 +19,16 @@
   - 29/29 tests pass; composite phase='elo'; Elo delta stdev=0.24 pts/100, mean≈0
   - Top 10: Jokic +5.80, SGA +5.41, Wemby +5.31 overall (composite)
   - K calibrated: ELO_K_OFFENSE_DEFENSE=0.02, ELO_K_PACE=0.01 (K=2.0 was 80x too large)
+- **P7**: downstream prediction engine — validated (2026-03-21)
+  - 59/59 tests pass
+  - downstream/team_ratings.py — pure player→team aggregation (possession-weighted)
+  - downstream/lineup_sampler.py — pure Monte Carlo simulation (N=1000)
+  - downstream/odds_client.py — Odds API wrapper (spreads, moneylines, totals)
+  - downstream/espn_client.py — ESPN public injury API (no auth needed)
+  - downstream/calibration.py — OLS fit → calibration_coeffs.json
+  - downstream/predictions.py — daily orchestration, writes to `predictions` table
+  - scripts/run_predictions.bat — daily runner (run after nightly_job)
+  - Calibration: α=7.98, HCA=+2.2 pts, B2B home=-3.4 pts, σ=13.4 pts, val_corr=0.54
 
 ## Key Design Decisions Locked In
 - Dependency management: `uv` + `pyproject.toml`
@@ -35,6 +45,26 @@
 - Clock format from live provider: `PT{M}M{S}.{ms}S` (ISO 8601) not MM:SS
 - **CLAUDE.md overrides README on rapm.py purity**: rolling RAPM orchestration lives in
   `pipeline/nightly_job.py` (not models/rapm.py), keeping models/rapm.py pure (no DB I/O)
+
+## P7 Architecture
+- `downstream/team_ratings.py` — PURE: normalize_name, build_name_to_id, compute_team_ratings,
+  compute_raw_margin, shares_from_minutes
+- `downstream/lineup_sampler.py` — PURE: simulate_game, apply_calibration, margin_to_win_prob
+- `downstream/odds_client.py` — Odds API: get_nba_odds(target_date) → list[GameOdds]
+  - **Spread convention**: we negate Odds API home team point so positive = home favored throughout
+  - market_spread = -odds_api_home_point (e.g. ATL -10 stored as +10 in our DB)
+- `downstream/espn_client.py` — ESPN public injury API: get_nba_injuries(), get_out_player_names()
+  - No auth required; returns Out/Doubtful/Suspension as is_out=True
+- `downstream/balldontlie_client.py` — BDL wrapper (free tier only has /v1/teams; injuries/stats are paid)
+- `downstream/calibration.py` — run once to fit OLS, saves downstream/calibration_coeffs.json
+- `downstream/predictions.py` — daily orchestration:
+  1. Load calibration_coeffs.json
+  2. Fetch Odds API lines
+  3. Fetch ESPN injuries (exclude Out/Doubtful from lineups)
+  4. Build lineup profiles from DB possession history (last 15 games per team)
+  5. Monte Carlo simulation (N=1000) per game
+  6. Apply calibrated adjustments
+  7. Write to `predictions` table, print report
 
 ## P6 Architecture
 - `models/elo.py` — PURE: sigmoid, elo_update (mutates in-place), replay_game_elo (takes possessions list)
@@ -54,9 +84,6 @@
 - `scripts/install_task.ps1` — registers Windows Task Scheduler task (run once, elevated PS)
 - nightly_job.py logs to stdout only; bat file handles file redirect
 
-## What's Pending
-- Downstream models (spread_model.py, live_model.py, lineup_optimizer.py) — not specced yet
-
 ## Known Issues / Gotchas
 - **Rolling window = full season right now**: union window logic takes min(all players' window starts).
   Bench players and cut 10-day contract guys who only played in October drag it back to Oct 21.
@@ -71,11 +98,18 @@
 - `data.nba.com` PBP endpoint times out in 2025 — pbpstats data_nba provider unreliable
 - Live S3 provider: some possessions have 4 players (fouled out / substitution edge cases) — skipped
 - `datetime.utcnow()` deprecated in Python 3.14 — use `datetime.now(timezone.utc)`
+- **BDL free tier**: only /v1/teams works; /v1/player_injuries, /v1/players/active, /v1/stats all 401
+- **Possession share redistribution gap**: when injured players are removed, remaining players'
+  shares don't sum to 1.0 — this makes depleted teams look weaker than they are. Fix: normalize
+  shares after injury removal. See memory/model-analysis.md for details.
 
 ## Key Commands
 - `PYTHONPATH=. uv run python pipeline/nightly_job.py` — run nightly job manually
 - `PYTHONPATH=. uv run python pipeline/phase1_full_season.py` — re-run full-season RAPM
-- `uv run pytest tests/` — run all tests (10 tests, all passing as of P5)
+- `PYTHONPATH=. uv run python downstream/predictions.py` — predict tomorrow's slate
+- `PYTHONPATH=. uv run python downstream/predictions.py --date YYYY-MM-DD` — specific date
+- `PYTHONPATH=. uv run python downstream/calibration.py` — refit calibration coefficients
+- `uv run pytest tests/` — run all tests (59 tests, all passing as of P7)
 - `powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1` — register Task Scheduler
 
 ## DB State (as of 2026-03-21)
@@ -83,10 +117,10 @@
 - current_ratings: phase='elo' (P6 composite — RAPM base + Elo delta)
 - rapm_ratings: has both rapm_full (historical) and rapm_rolling (latest) rows
 - elo_ratings: 22,572 rows (per-player-per-game cumulative deltas)
+- predictions: 6 rows (2026-03-22 slate, first predictions run)
 
 ## Next Steps
-- P0–P6 complete. Core rating engine is done.
-- Downstream work (not yet specced):
-  - Spread model (downstream/spread_model.py) — predict game spreads from ratings
-  - Live model (downstream/live_model.py) — in-game simulation using per-possession Elo
-  - Lineup optimizer (downstream/lineup_optimizer.py)
+- Improve lineup redistribution after injury removal (normalize shares to 1.0)
+- Track prediction accuracy: after games play out, compare predicted vs actual margin
+- Build CLV tracking: compare our predictions to closing lines
+- See memory/model-analysis.md for full improvement backlog

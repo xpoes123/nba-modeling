@@ -153,13 +153,15 @@ These are implemented as Claude Code slash commands in `.claude/commands/`. Use 
 
 ## Memory & Session Continuity
 
-- `memory/current-status.md` is the source of truth for session state: current phase (P0–P6), last validated milestone, known issues, and next steps
+- `memory/current-status.md` is the source of truth for session state: current phase (P0–P7), last validated milestone, known issues, and next steps
+- `memory/model-analysis.md` is the source of truth for prediction model quality: calibration results, known gaps, improvement backlog, and per-game prediction logs. **Read this before doing any work on the downstream prediction engine.**
 - **Before ending any session**, always update `memory/current-status.md` with:
   - Current phase and whether it's complete
   - Everything completed this session
   - Any key design decisions that were made
   - Known issues or blockers
   - Exact next steps
+- **If working on model quality or predictions**, also update `memory/model-analysis.md` with new observations, edges, or improvement ideas.
 - **Start every session with `/fresh-eyes`** to re-orient before writing any code
 - If the DB has data, run `/check-db` before writing new code that queries it — the schema or contents may have changed since the last session
 - **Do not rely on conversation history across sessions** — write everything important to `memory/current-status.md` so it survives a fresh context

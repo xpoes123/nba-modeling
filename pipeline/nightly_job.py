@@ -26,6 +26,8 @@ import pandas as pd
 import config
 from ingestion.backfill import compute_and_insert_league_averages
 from ingestion.ingest_daily import ingest_new_games
+from models.composite import update_current_ratings
+from models.elo import replay_game_elo
 from models.rapm import build_design_matrix, build_player_index, fit_rapm
 
 logging.basicConfig(
@@ -310,6 +312,236 @@ def run_rolling_rapm(
 
 
 # ---------------------------------------------------------------------------
+# Elo state helpers (DB reads/writes; pure logic lives in models/elo.py)
+# ---------------------------------------------------------------------------
+
+def _load_elo_state(conn: sqlite3.Connection, season: str) -> dict:
+    """
+    Load current Elo state from DB.
+
+    Combines:
+      - Latest rapm_rolling ratings per player (as RAPM base)
+      - Latest elo_ratings row per player (as cumulative deltas)
+
+    Falls back to all deltas = 0 if no elo_ratings rows exist yet.
+
+    Returns:
+        current_elos dict: player_id -> {rapm_offense, rapm_defense, rapm_pace,
+                                          offense_delta, defense_delta, pace_delta}
+    """
+    rapm_rows = conn.execute(
+        """
+        SELECT r.player_id, r.offense, r.defense, r.pace
+        FROM rapm_ratings r
+        INNER JOIN (
+            SELECT player_id, MAX(window_end_date) AS latest
+            FROM rapm_ratings
+            WHERE season = ? AND phase = 'rapm_rolling'
+            GROUP BY player_id
+        ) sub ON r.player_id = sub.player_id
+              AND r.window_end_date = sub.latest
+        WHERE r.season = ? AND r.phase = 'rapm_rolling'
+        """,
+        (season, season),
+    ).fetchall()
+
+    current_elos: dict = {}
+    for player_id, rapm_off, rapm_def, rapm_pace in rapm_rows:
+        current_elos[player_id] = {
+            "rapm_offense": rapm_off,
+            "rapm_defense": rapm_def,
+            "rapm_pace": rapm_pace,
+            "offense_delta": 0.0,
+            "defense_delta": 0.0,
+            "pace_delta": 0.0,
+        }
+
+    # Overlay latest cumulative Elo deltas
+    elo_rows = conn.execute(
+        """
+        SELECT e.player_id, e.offense_delta, e.defense_delta, e.pace_delta
+        FROM elo_ratings e
+        INNER JOIN (
+            SELECT player_id, MAX(updated_at) AS latest
+            FROM elo_ratings
+            WHERE season = ?
+            GROUP BY player_id
+        ) sub ON e.player_id = sub.player_id
+              AND e.updated_at = sub.latest
+        WHERE e.season = ?
+        """,
+        (season, season),
+    ).fetchall()
+
+    for player_id, off_d, def_d, pace_d in elo_rows:
+        if player_id in current_elos:
+            current_elos[player_id]["offense_delta"] = off_d
+            current_elos[player_id]["defense_delta"] = def_d
+            current_elos[player_id]["pace_delta"] = pace_d
+        else:
+            # Has Elo data but no current RAPM (e.g. traded, cut): cold-start RAPM base
+            current_elos[player_id] = {
+                "rapm_offense": 0.0,
+                "rapm_defense": 0.0,
+                "rapm_pace": 0.0,
+                "offense_delta": off_d,
+                "defense_delta": def_d,
+                "pace_delta": pace_d,
+            }
+
+    return current_elos
+
+
+def _get_unreplayed_game_ids(conn: sqlite3.Connection, season: str) -> list[str]:
+    """
+    Return game IDs that have possessions in the DB but no elo_ratings entries yet.
+    Ordered chronologically so cumulative deltas build up correctly.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT g.game_id
+        FROM games g
+        WHERE g.season = ?
+          AND EXISTS (
+              SELECT 1 FROM possessions p WHERE p.game_id = g.game_id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM elo_ratings e WHERE e.game_id = g.game_id
+          )
+        ORDER BY g.game_date
+        """,
+        (season,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _load_game_possessions(conn: sqlite3.Connection, game_id: str) -> list[dict]:
+    """Load all possessions for a game in chronological order (by possession_number)."""
+    rows = conn.execute(
+        """
+        SELECT off_player_1, off_player_2, off_player_3, off_player_4, off_player_5,
+               def_player_1, def_player_2, def_player_3, def_player_4, def_player_5,
+               points_scored
+        FROM possessions
+        WHERE game_id = ?
+        ORDER BY possession_number
+        """,
+        (game_id,),
+    ).fetchall()
+    cols = [
+        "off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5",
+        "def_player_1", "def_player_2", "def_player_3", "def_player_4", "def_player_5",
+        "points_scored",
+    ]
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def _upsert_elo_ratings(
+    conn: sqlite3.Connection,
+    game_id: str,
+    season: str,
+    appeared: set[str],
+    current_elos: dict,
+) -> None:
+    """Write cumulative Elo deltas for all players who appeared in this game."""
+    conn.executemany(
+        """
+        INSERT INTO elo_ratings
+            (player_id, season, game_id, offense_delta, defense_delta, pace_delta)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(player_id, game_id) DO UPDATE SET
+            offense_delta = excluded.offense_delta,
+            defense_delta = excluded.defense_delta,
+            pace_delta    = excluded.pace_delta,
+            updated_at    = datetime('now')
+        """,
+        [
+            (
+                pid, season, game_id,
+                current_elos[pid]["offense_delta"],
+                current_elos[pid]["defense_delta"],
+                current_elos[pid]["pace_delta"],
+            )
+            for pid in appeared
+            if pid in current_elos
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Elo replay orchestrator
+# ---------------------------------------------------------------------------
+
+def run_elo_replay(db_path: str, season: str) -> dict:
+    """
+    Load Elo state, replay all un-replayed games, persist cumulative deltas.
+
+    Finds games that have possessions in the DB but no elo_ratings rows yet,
+    replays them chronologically, and upserts cumulative deltas after each game.
+
+    Args:
+        db_path: Path to SQLite database.
+        season:  Season string, e.g. '2025-26'.
+
+    Returns:
+        Summary dict with n_games replayed and n_players with Elo state.
+    """
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT avg_ppp, avg_pace FROM league_averages WHERE season = ?", (season,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"No league_averages for season '{season}'.")
+        avg_ppp, avg_pace = row
+
+        current_elos = _load_elo_state(conn, season)
+        logger.info("Loaded Elo state for %d players.", len(current_elos))
+
+        unreplayed = _get_unreplayed_game_ids(conn, season)
+        logger.info("Found %d game(s) to replay via Elo.", len(unreplayed))
+
+        if not unreplayed:
+            logger.info("No new games to replay — Elo state is current.")
+            return {"n_games": 0, "n_players": len(current_elos)}
+
+        games_replayed = 0
+        for game_id in unreplayed:
+            game_row = conn.execute(
+                "SELECT game_pace FROM games WHERE game_id = ?", (game_id,)
+            ).fetchone()
+            game_pace = game_row[0] if game_row else None
+
+            possessions = _load_game_possessions(conn, game_id)
+            if not possessions:
+                logger.warning("Game %s has no possessions, skipping Elo replay.", game_id)
+                continue
+
+            appeared = replay_game_elo(
+                possessions, current_elos,
+                league_avg_ppp=avg_ppp,
+                league_avg_pace=avg_pace,
+                game_pace=game_pace,
+                K=config.ELO_K_OFFENSE_DEFENSE,
+                K_pace=config.ELO_K_PACE,
+            )
+
+            with conn:
+                _upsert_elo_ratings(conn, game_id, season, appeared, current_elos)
+
+            games_replayed += 1
+
+        logger.info(
+            "Elo replay done: %d game(s) replayed, %d players with Elo state.",
+            games_replayed, len(current_elos),
+        )
+        return {"n_games": games_replayed, "n_players": len(current_elos)}
+
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -331,7 +563,15 @@ def main() -> None:
         as_of_date=today,
     )
 
-    # 4. Summary
+    # 4. Replay new games via Elo (cumulative deltas on top of RAPM base)
+    result_elo = run_elo_replay(config.DB_PATH, config.INITIAL_SEASON)
+    logger.info("Elo replay: %d game(s) replayed.", result_elo["n_games"])
+
+    # 5. Update composite ratings (RAPM base + Elo delta → current_ratings phase='elo')
+    update_current_ratings(config.DB_PATH, config.INITIAL_SEASON)
+    logger.info("Composite ratings updated (phase='elo').")
+
+    # 6. Summary
     conn = sqlite3.connect(config.DB_PATH)
     n_rated = conn.execute("SELECT COUNT(*) FROM current_ratings").fetchone()[0]
     conn.close()

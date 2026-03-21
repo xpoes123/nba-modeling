@@ -108,14 +108,16 @@ def _upsert_prediction(conn: sqlite3.Connection, pred: dict) -> None:
             predicted_spread, predicted_win_prob, sim_std,
             market_spread, market_win_prob, market_total,
             spread_edge, win_prob_edge,
-            home_b2b, away_b2b, n_simulations
+            home_b2b, away_b2b, n_simulations,
+            home_coverage, away_coverage
         ) VALUES (
             :odds_event_id, :game_date, :home_team_id, :away_team_id,
             :home_team_name, :away_team_name,
             :predicted_spread, :predicted_win_prob, :sim_std,
             :market_spread, :market_win_prob, :market_total,
             :spread_edge, :win_prob_edge,
-            :home_b2b, :away_b2b, :n_simulations
+            :home_b2b, :away_b2b, :n_simulations,
+            :home_coverage, :away_coverage
         )
         ON CONFLICT(game_date, home_team_name, away_team_name) DO UPDATE SET
             predicted_spread   = excluded.predicted_spread,
@@ -129,6 +131,8 @@ def _upsert_prediction(conn: sqlite3.Connection, pred: dict) -> None:
             home_b2b           = excluded.home_b2b,
             away_b2b           = excluded.away_b2b,
             n_simulations      = excluded.n_simulations,
+            home_coverage      = excluded.home_coverage,
+            away_coverage      = excluded.away_coverage,
             created_at         = datetime('now')
         """,
         pred,
@@ -143,22 +147,38 @@ def _get_team_possession_profiles(
     team_id: str,
     conn: sqlite3.Connection,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
+    before_date: str | None = None,
 ) -> dict[str, list[float]]:
     """Return player_id → [possession_share_game1, possession_share_game2, ...] for last n games.
 
     Possession share = fraction of the team's offensive possessions a player appeared in.
+
+    Args:
+        before_date: if set (YYYY-MM-DD), only include games strictly before this date
     """
     # Get the last n game IDs for this team (ordered newest first via games table)
-    rows = conn.execute(
-        """
-        SELECT game_id
-        FROM games
-        WHERE home_team_id = ? OR away_team_id = ?
-        ORDER BY game_date DESC
-        LIMIT ?
-        """,
-        (team_id, team_id, n_games),
-    ).fetchall()
+    if before_date is not None:
+        rows = conn.execute(
+            """
+            SELECT game_id
+            FROM games
+            WHERE (home_team_id = ? OR away_team_id = ?) AND game_date < ?
+            ORDER BY game_date DESC
+            LIMIT ?
+            """,
+            (team_id, team_id, before_date, n_games),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT game_id
+            FROM games
+            WHERE home_team_id = ? OR away_team_id = ?
+            ORDER BY game_date DESC
+            LIMIT ?
+            """,
+            (team_id, team_id, n_games),
+        ).fetchall()
 
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
@@ -202,7 +222,8 @@ def _build_minutes_profile_from_db(
     player_id_to_name: dict[str, str],
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     min_games: int = 3,
-) -> MinutesProfile:
+    before_date: str | None = None,
+) -> tuple[MinutesProfile, float]:
     """Build MinutesProfile from DB possession history.
 
     Converts possession shares → synthetic minutes (scaled to ~240 total team minutes
@@ -215,35 +236,42 @@ def _build_minutes_profile_from_db(
         player_id_to_name: player_id → player_name (for injury filtering)
         n_games: lookback window
         min_games: minimum appearances to include a player
+        before_date: if set (YYYY-MM-DD), only include games strictly before this date
 
     Returns:
-        MinutesProfile: player_id → (mean_synthetic_minutes, std_synthetic_minutes)
+        (MinutesProfile, coverage_ratio) where coverage_ratio is the fraction of normal
+        possession-weighted minutes that are NOT excluded by injuries (0–1).
     """
-    profiles = _get_team_possession_profiles(team_id, conn, n_games)
+    profiles = _get_team_possession_profiles(team_id, conn, n_games, before_date=before_date)
     result: MinutesProfile = MinutesProfile()
+
+    # Compute total weight across all qualified players (before injury filter)
+    total_weight = sum(mean(sh) for sh in profiles.values() if len(sh) >= min_games)
+    available_weight = 0.0
 
     for pid, shares in profiles.items():
         if len(shares) < min_games:
             continue
 
         name = player_id_to_name.get(pid, "")
+        mean_share = mean(shares)
+
         if normalize_name(name) in injured_names:
             logger.debug("Skipping injured player: %s (%s)", name, pid)
             continue
 
-        # Convert possession share → synthetic minutes
-        # A player with 20% possession share plays ~20% of 240 team minutes = 48 min
-        mean_share = mean(shares)
+        available_weight += mean_share
         std_share = stdev(shares) if len(shares) > 1 else 0.03
 
-        # Scale to minutes (240 = 5 players × 48 min/game)
-        mean_mins = mean_share * 240
-        std_mins = std_share * 240
+        # Convert possession share → synthetic minutes
+        # A player with 20% possession share plays ~20% of 240 team minutes = 48 min
+        result[pid] = (mean_share * 240, std_share * 240)
 
-        result[pid] = (mean_mins, std_mins)
-
-    logger.debug("Team %s: %d players in lineup profile", team_id, len(result))
-    return result
+    coverage_ratio = available_weight / total_weight if total_weight > 0 else 1.0
+    logger.debug(
+        "Team %s: %d players, coverage=%.1f%%", team_id, len(result), coverage_ratio * 100
+    )
+    return result, coverage_ratio
 
 
 # ---------------------------------------------------------------------------
@@ -295,10 +323,15 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
         prob_edge = p["win_prob_edge"]
         edge_sign = "+" if spread_edge is not None and spread_edge > 0 else ""
         prob_sign = "+" if prob_edge is not None and prob_edge > 0 else ""
+        home_cov = p.get("home_coverage", 1.0) or 1.0
+        away_cov = p.get("away_coverage", 1.0) or 1.0
+        sigma_inj = p.get("sigma_injury", 0.0) or 0.0
 
         print(f"\n{away} @ {home}")
 
         spread_line = f"  Spread   : Our {our_spread_str} ± {sim_std:.1f}"
+        if sigma_inj > 0.5:
+            spread_line += f" (inj+{sigma_inj:.1f})"
         if mkt_spread is not None:
             spread_line += f"    Market: {mkt_spread_str}"
         if spread_edge is not None:
@@ -315,6 +348,9 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
 
         if mkt_total is not None:
             print(f"  Total    : Market O/U {mkt_total:.1f}")
+        cov_parts = [f"{home_ab} {home_cov:.0%}"]
+        cov_parts.append(f"{_abbrev(away)} {away_cov:.0%}")
+        print(f"  Coverage : {' | '.join(cov_parts)}")
         print(f"  Notes    : {', '.join(notes) if notes else 'none'}")
 
         if spread_edge is not None:
@@ -422,10 +458,10 @@ def run_predictions(
             away_b2b = _detect_b2b(away_nba_id, target_date, conn)
 
             # Build lineup profiles from our DB possession history
-            home_mins = _build_minutes_profile_from_db(
+            home_mins, home_coverage = _build_minutes_profile_from_db(
                 home_nba_id, conn, injured_names, player_id_to_name
             )
-            away_mins = _build_minutes_profile_from_db(
+            away_mins, away_coverage = _build_minutes_profile_from_db(
                 away_nba_id, conn, injured_names, player_id_to_name
             )
 
@@ -460,8 +496,13 @@ def run_predictions(
                 away_b2b=away_b2b,
             )
 
-            # Win probability: combine Monte Carlo σ with calibration residual σ
-            total_sigma = math.sqrt(sim.std_margin ** 2 + sigma_residual ** 2)
+            # Injury uncertainty: extra σ when significant minutes are missing.
+            # Scale: σ_residual × 1.5 × (2 - home_coverage - away_coverage).
+            # At full health (1.0, 1.0): σ_injury = 0. At both 70%: σ_injury ≈ 0.9 × σ_residual.
+            sigma_injury = sigma_residual * 1.5 * max(0.0, 2.0 - home_coverage - away_coverage)
+
+            # Total uncertainty: residual + Monte Carlo lineup variance + injury adjustment
+            total_sigma = math.sqrt(sim.std_margin ** 2 + sigma_residual ** 2 + sigma_injury ** 2)
             predicted_win_prob = margin_to_win_prob(predicted_spread, total_sigma)
 
             spread_edge = (
@@ -482,7 +523,7 @@ def run_predictions(
                 "away_team_name": away_name,
                 "predicted_spread": round(predicted_spread, 2),
                 "predicted_win_prob": round(predicted_win_prob, 4),
-                "sim_std": round(total_sigma, 2),  # total uncertainty (calibration + lineup)
+                "sim_std": round(total_sigma, 2),  # total uncertainty (calibration + injury + lineup)
                 "market_spread": game["market_spread"],
                 "market_win_prob": (
                     round(game["market_win_prob"], 4) if game["market_win_prob"] is not None else None
@@ -493,6 +534,9 @@ def run_predictions(
                 "home_b2b": int(home_b2b),
                 "away_b2b": int(away_b2b),
                 "n_simulations": n_simulations,
+                "home_coverage": round(home_coverage, 4),
+                "away_coverage": round(away_coverage, 4),
+                "sigma_injury": round(sigma_injury, 2),  # not stored in DB, used for report
             }
             predictions.append(pred)
 

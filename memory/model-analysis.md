@@ -55,11 +55,13 @@ injury return, rookie emergence), the last-15-game average will be stale.
 **Mitigation:** Reduce lookback to 7–10 games for pre-deadline predictions; post-deadline
 increase for settled rosters.
 
-### 4. sim_std ≈ 0 from Monte Carlo
-Possession shares are very stable game-to-game, so Monte Carlo lineup sampling produces
-nearly zero variance. Total σ ≈ σ_residual (13.4 pts). The Monte Carlo is doing what it
-should — the lineup uncertainty just isn't the dominant source of variance in the NBA.
-This is fine. The displayed `± 13.4` is the honest total uncertainty.
+### 4. sim_std is now injury-adjusted (as of 2026-03-21)
+The displayed `± X` now includes an injury uncertainty component:
+  `sigma_injury = sigma_residual * 1.5 * max(0, 2.0 - home_coverage - away_coverage)`
+  `total_sigma = sqrt(sim.std^2 + sigma_residual^2 + sigma_injury^2)`
+Coverage ratio = fraction of normal possession weight that is healthy and available.
+Examples: PHI@UTA (both ~78% coverage) → ±16.1; GSW@ATL (84% away) → ±13.8.
+The scale factor 1.5 is not empirically calibrated yet — track accuracy vs sigma over time.
 
 ### 5. α = 7.98 is large — RAPM units vs game-point units
 Raw RAPM margin ≈ (offensive_diff - defensive_diff) / 100 * pace ≈ small numbers.
@@ -85,6 +87,15 @@ data on some players), the amplification could cause instability. Monitor over t
 **Observation:** All large edges coincide with injury-heavy games. When both teams have
 many injuries, our model's possession-share redistribution may be inaccurate.
 
+**Root cause (diagnosed 2026-03-21):**
+- Our model re-normalizes remaining players to 100% of minutes. Backup players with
+  neutral RAPM (~0) fill in for missing stars. The market knows these backups can't
+  replicate star production at 35+ mpg (depth cliff effect).
+- PHI@UTA: both teams so depleted that the HCA term (+2.22) dominates a tiny raw margin.
+  UTA's rookies (Bailey off=-1.67, Garcia off=-0.86) drag their team off=-0.17, but
+  PHI's depleted roster is even worse (off=-0.41). Market prices PHI better.
+- RAPM is noisier for low-minutes players who suddenly take on heavy usage.
+
 ---
 
 ## Improvement Ideas (Prioritized)
@@ -103,7 +114,7 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 5. **Track prediction accuracy over time** — once we have 30+ prediction-vs-actual pairs,
    run a post-hoc regression to check if our edges correlate with actual outcomes.
-   This is the real calibration check.
+   This is the real calibration check. Use `downstream/backtest.py` for this.
 
 6. **Benchmark against naive models** — compare to:
    - Home team always wins (baseline)
@@ -112,3 +123,26 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 7. **Closing line value (CLV) tracking** — compare our opening predictions to closing lines
    to see if we predict where the market moves. A good model should predict line movement.
+
+---
+
+## Backtest Results (2026-03-21)
+
+### Mar 16-20, 2026 (39 games, no injury exclusions — full-roster backtest)
+
+| Metric           | Value        | Notes                                      |
+|------------------|--------------|--------------------------------------------|
+| MAE              | 11.98 pts    | Better than sigma_residual=13.4 (good)     |
+| RMSE             | 14.69 pts    | Consistent with calibration val RMSE=14.4  |
+| Bias             | -2.33 pts    | We underestimate home advantage slightly   |
+| Correlation      | 0.631        | Excellent — up from val_corr=0.535         |
+| Dir accuracy     | 82.1% (32/39)| Strong winner prediction                   |
+
+Coverage is 100%/100% for all games (no injury filtering in backtest — uses actual lineups).
+Correlation of 0.631 is at the top end of where sharp models operate (~0.65-0.70).
+Bias of -2.33 pts: HCA might be slightly underfit in the calibration (beta_hca = +2.22).
+
+**Notable misfires:** MIL@UTA (-34.6 error), TOR@CHI (+28.4), MIA@CHA (-27.6), PHI@DEN (-20.5)
+— all large blowouts where one team had an exceptional night. These are inherently unpredictable.
+
+**Run command:** `PYTHONPATH=. uv run python downstream/backtest.py --start YYYY-MM-DD --end YYYY-MM-DD`

@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS predictions (
     home_b2b            INTEGER NOT NULL DEFAULT 0,
     away_b2b            INTEGER NOT NULL DEFAULT 0,
     n_simulations       INTEGER,
+    home_coverage       REAL,                        -- fraction of normal home minutes available (0-1)
+    away_coverage       REAL,                        -- fraction of normal away minutes available (0-1)
     created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(game_date, home_team_name, away_team_name)
 );

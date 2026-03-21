@@ -182,7 +182,8 @@ def run_backtest(
             return []
 
         alpha = coeffs["alpha"]
-        beta_hca = coeffs["beta_hca"]
+        beta_hca_fallback = coeffs["beta_hca"]
+        beta_hca_by_team: dict[str, float] = coeffs.get("beta_hca_by_team", {})
         beta_b2b_home = coeffs["beta_b2b_home"]
         beta_b2b_away = coeffs["beta_b2b_away"]
 
@@ -242,10 +243,11 @@ def run_backtest(
             home_b2b = _detect_b2b(home_id, gdate, conn)
             away_b2b = _detect_b2b(away_id, gdate, conn)
 
+            team_hca = beta_hca_by_team.get(home_id, beta_hca_fallback)
             predicted = apply_calibration(
                 sim.mean_margin,
                 alpha=alpha,
-                beta_hca=beta_hca,
+                beta_hca=team_hca,
                 beta_b2b_home=beta_b2b_home,
                 beta_b2b_away=beta_b2b_away,
                 home_b2b=home_b2b,

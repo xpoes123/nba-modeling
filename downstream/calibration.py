@@ -23,8 +23,11 @@ from sklearn.metrics import root_mean_squared_error
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import CALIBRATION_PATH, DB_PATH, INITIAL_SEASON
+from config import CALIBRATION_PATH, DB_PATH, INITIAL_SEASON, NBA_TEAM_MAP
 from downstream.team_ratings import PlayerRating, compute_raw_margin, compute_team_ratings
+
+# Canonical sorted team ID list — order must be stable across train/val/predict.
+_TEAM_IDS: list[str] = sorted(NBA_TEAM_MAP.keys())
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -218,11 +221,15 @@ def run_calibration(
     val = games_valid.iloc[n_train:]
     logger.info("Train: %d games | Val: %d games", len(train), len(val))
 
-    # Fit OLS: actual_margin ~ alpha*raw_margin + beta_hca + beta_b2b_home + beta_b2b_away
+    # Fit OLS: actual_margin ~ alpha*raw_margin + hca[home_team] + beta_b2b_home + beta_b2b_away
+    # Each of the 30 home-team dummies gets its own HCA coefficient instead of a single intercept.
     def _features(df: pd.DataFrame) -> np.ndarray:
+        team_dummies = np.column_stack(
+            [(df["home_team_id"] == tid).astype(float).values for tid in _TEAM_IDS]
+        )
         return np.column_stack([
             df["raw_margin"].values,
-            np.ones(len(df)),          # HCA intercept
+            team_dummies,
             df["home_b2b"].values,
             df["away_b2b"].values,
         ])
@@ -235,7 +242,15 @@ def run_calibration(
     model = LinearRegression(fit_intercept=False)
     model.fit(X_train, y_train)
 
-    alpha, beta_hca, beta_b2b_home, beta_b2b_away = model.coef_
+    n_teams = len(_TEAM_IDS)
+    alpha = float(model.coef_[0])
+    beta_hca_by_team: dict[str, float] = {
+        tid: float(model.coef_[i + 1]) for i, tid in enumerate(_TEAM_IDS)
+    }
+    beta_b2b_home = float(model.coef_[1 + n_teams])
+    beta_b2b_away = float(model.coef_[1 + n_teams + 1])
+    # League-average HCA (fallback for unknown teams)
+    beta_hca = float(np.mean(list(beta_hca_by_team.values())))
 
     # Residual sigma on full training set (used for win probability)
     train_preds = model.predict(X_train)
@@ -249,10 +264,11 @@ def run_calibration(
     val_corr = float(np.corrcoef(y_val, val_preds)[0, 1])
 
     coeffs = {
-        "alpha": float(alpha),
-        "beta_hca": float(beta_hca),
-        "beta_b2b_home": float(beta_b2b_home),
-        "beta_b2b_away": float(beta_b2b_away),
+        "alpha": alpha,
+        "beta_hca": beta_hca,
+        "beta_hca_by_team": beta_hca_by_team,
+        "beta_b2b_home": beta_b2b_home,
+        "beta_b2b_away": beta_b2b_away,
         "sigma_residual": sigma_residual,
         "train_rmse": train_rmse,
         "val_rmse": val_rmse,
@@ -269,12 +285,20 @@ def run_calibration(
 
     logger.info("=== Calibration Results ===")
     logger.info("  alpha (raw margin scale): %.4f", alpha)
-    logger.info("  beta_hca:                 %.4f pts", beta_hca)
+    logger.info("  beta_hca (league avg):    %.4f pts", beta_hca)
     logger.info("  beta_b2b_home:            %.4f pts", beta_b2b_home)
     logger.info("  beta_b2b_away:            %.4f pts", beta_b2b_away)
     logger.info("  sigma_residual:           %.2f pts", sigma_residual)
     logger.info("  Train RMSE: %.2f  corr: %.3f", train_rmse, train_corr)
     logger.info("  Val   RMSE: %.2f  corr: %.3f", val_rmse, val_corr)
+
+    # Log team HCAs sorted descending so the outliers are visible
+    sorted_hca = sorted(beta_hca_by_team.items(), key=lambda x: x[1], reverse=True)
+    logger.info("  Team HCAs (sorted):")
+    for tid, hca in sorted_hca:
+        abbrev = NBA_TEAM_MAP[tid]["abbrev"]
+        logger.info("    %s: %+.2f pts", abbrev, hca)
+
     logger.info("Saved to %s", output_path)
 
     return coeffs

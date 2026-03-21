@@ -28,7 +28,10 @@
   - downstream/calibration.py — OLS fit → calibration_coeffs.json
   - downstream/predictions.py — daily orchestration, writes to `predictions` table
   - scripts/run_predictions.bat — daily runner (run after nightly_job)
-  - Calibration: α=7.98, HCA=+2.2 pts, B2B home=-3.4 pts, σ=13.4 pts, val_corr=0.54
+  - Calibration v1: α=7.98, HCA=+2.2 pts, B2B home=-3.4 pts, σ=13.4 pts, val_corr=0.54
+  - Calibration v2 (2026-03-21): team-specific HCA (30 dummies). α=8.48, HCA avg=+2.11 pts,
+    B2B home=-3.20 pts, σ=13.18 pts, val_corr=0.470. Val corr regressed vs v1 — overfitting.
+    Next: ridge regularization on team dummies to recover val performance.
 
 ## Key Design Decisions Locked In
 - Dependency management: `uv` + `pyproject.toml`

@@ -5,24 +5,50 @@ Update this file as we learn from comparing predictions to actual outcomes.
 
 ---
 
-## Calibration (as of 2026-03-21)
+## Calibration (as of 2026-03-21, updated 2026-03-21)
 
-Fit on 1,041 games (2025-26 season, first 600 train / last 441 val):
+### v2: Team-specific HCA (current)
+
+Fit on 1,041 games (2025-26 season, first 624 train / last 417 val).
+Replaces single β_hca intercept with 30 team-specific HCA dummies (one per home team).
 
 | Coefficient     | Value      | Interpretation                              |
 |-----------------|------------|---------------------------------------------|
-| α (scale)       | 7.98       | Raw RAPM margins need 8x scaling to pts      |
-| β_hca           | +2.22 pts  | Home court advantage (reasonable, typical 2–3 pts) |
-| β_b2b_home      | −3.41 pts  | Home team on B2B (large — worth watching)   |
-| β_b2b_away      | +1.60 pts  | Away team on B2B (hurts them, helps home)   |
-| σ_residual      | 13.43 pts  | Model uncertainty — typical for pure-ratings model |
-| Train RMSE      | 13.43 pts  |                                             |
-| Val RMSE        | 14.39 pts  | ~1 pt degradation out-of-sample (healthy)   |
-| Train corr      | 0.480      |                                             |
-| Val corr        | 0.535      | Val better than train — no overfitting       |
+| α (scale)       | 8.48       | Raw RAPM margins need ~8.5x scaling to pts  |
+| β_hca (avg)     | +2.11 pts  | League-average HCA (fallback for unknowns)  |
+| β_b2b_home      | −3.20 pts  | Home team on B2B                            |
+| β_b2b_away      | +2.04 pts  | Away team on B2B (hurts them, helps home)   |
+| σ_residual      | 13.18 pts  |                                             |
+| Train RMSE      | 13.18 pts  |                                             |
+| Val RMSE        | 14.90 pts  | 1.7 pt gap — slight overfitting vs v1       |
+| Train corr      | 0.509      |                                             |
+| Val corr        | 0.470      | Worse than v1 (0.535) — see note below      |
 
-**Baseline context:** Sharp market models achieve ~0.65–0.70 correlation. Ours at 0.54 is
-reasonable for a pure player-rating model with no home-court/schedule features baked in yet.
+**Team HCAs (notable outliers):**
+- PHX +8.1, GSW +7.2, HOU +5.1, MEM +4.4 (high)
+- CHA −4.2, DEN −1.7, BOS −1.2, PHI −1.1 (low)
+- DEN negative is counterintuitive given altitude — likely noise (SE ≈ 2.7 pts per team)
+
+**⚠ Overfitting warning:** Val corr dropped 0.535 → 0.470 vs v1. Added 29 parameters
+(4→33) with only ~24 home games per team in training. SE per team ≈ 13/√24 ≈ 2.7 pts,
+meaning estimates like PHX +8.1 are only ~2 SEs from the mean. The extreme values are
+likely noise, not real signal. Ridge regularization on the team dummies would fix this.
+
+### v1: Single global HCA (archived)
+
+| Coefficient     | Value      |
+|-----------------|------------|
+| α               | 7.98       |
+| β_hca           | +2.22 pts  |
+| β_b2b_home      | −3.41 pts  |
+| β_b2b_away      | +1.60 pts  |
+| σ_residual      | 13.43 pts  |
+| Val RMSE        | 14.39 pts  |
+| Val corr        | 0.535      |
+
+**Baseline context:** Sharp market models achieve ~0.65–0.70 correlation. Ours at 0.54 (v1)
+is reasonable for a pure player-rating model. v2 regressed on val — ridge regularization
+for team dummies is the priority next improvement.
 
 ---
 
@@ -100,28 +126,35 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 ## Improvement Ideas (Prioritized)
 
-1. **Redistribute possession shares after injury removal** — normalize remaining players
+1. **Ridge regularization on team HCA dummies** — current OLS team HCAs overfit (val corr
+   dropped 0.535→0.470). Switch team dummies to Ridge with a small alpha to shrink extreme
+   estimates toward the league average. Expected to recover the val corr regression.
+   Implementation: replace `LinearRegression` with `Ridge(alpha=X, fit_intercept=False)`;
+   tune X on val set. The raw_margin and B2B columns should NOT be regularized (only team
+   dummies) — requires `RidgeCV` with a custom penalty mask or a two-stage fit.
+
+2. **Redistribute possession shares after injury removal** — normalize remaining players
    to 100% so lineup weight doesn't drop when stars are out.
 
-2. **Position-adjusted replacement** — when a star is out, give their possessions to
+3. **Position-adjusted replacement** — when a star is out, give their possessions to
    their typical backup (from historical substitution patterns), not just normalize evenly.
 
-3. **Recency weighting** — weight the last 5 games more heavily than games 6–15 in the
+4. **Recency weighting** — weight the last 5 games more heavily than games 6–15 in the
    possession-share calculation. Would catch rotation changes faster.
 
-4. **Pace adjustment per matchup** — current pace estimate adds team pace ratings but
+5. **Pace adjustment per matchup** — current pace estimate adds team pace ratings but
    doesn't account for head-to-head pace interactions (two slow teams play even slower).
 
-5. **Track prediction accuracy over time** — once we have 30+ prediction-vs-actual pairs,
+6. **Track prediction accuracy over time** — once we have 30+ prediction-vs-actual pairs,
    run a post-hoc regression to check if our edges correlate with actual outcomes.
    This is the real calibration check. Use `downstream/backtest.py` for this.
 
-6. **Benchmark against naive models** — compare to:
+7. **Benchmark against naive models** — compare to:
    - Home team always wins (baseline)
    - Previous game's result (momentum model)
    - Pure Elo (no RAPM component)
 
-7. **Closing line value (CLV) tracking** — compare our opening predictions to closing lines
+8. **Closing line value (CLV) tracking** — compare our opening predictions to closing lines
    to see if we predict where the market moves. A good model should predict line movement.
 
 ---

@@ -232,7 +232,16 @@ SELECT SUM(possessions) FROM stints WHERE game_id = ?;
 **Goal:** Replace full-season RAPM with a 30-game rolling window, re-fit nightly.
 
 **Tasks:**
-1. Add to `models/rapm.py`:
+
+**P5.1 — Rolling RAPM + Nightly Job Script**
+1. Create `ingestion/ingest_daily.py`:
+   - `get_games_since(db_path: str, since_date: str) -> list[str]`
+     - Query `games` table for the max `game_date` already ingested
+     - Fetch all game IDs from `nba_api.LeagueGameLog` on or after that date
+     - Return only game IDs not yet in the `games` table
+   - `ingest_new_games(db_path: str) -> int`
+     - Call `get_games_since`, parse + ETL each new game, return count of games ingested
+2. Add to `models/rapm.py`:
    - `get_player_window(db_path: str, player_id: str, as_of_date: str, window_size=30) -> tuple[date, date]`
      - Find the last 30 games this player appeared in, on or before `as_of_date`
      - Return `(window_start_date, window_end_date)`
@@ -242,19 +251,31 @@ SELECT SUM(possessions) FROM stints WHERE game_id = ?;
      - Same matrix construction as full-season
    - `run_rolling_rapm(db_path: str, season: str, as_of_date: str, alpha=5000)`
      - Fit and store rolling RAPM ratings with window metadata
-2. Create `pipeline/nightly_job.py`:
-   - Fetch today's games via `ingest_daily.py`
-   - Parse and ETL each game
+3. Create `pipeline/nightly_job.py`:
+   - Ingest new games via `ingest_daily.ingest_new_games()`
    - Recalculate league averages
    - Run rolling RAPM as of today
    - Update `current_ratings` with `phase = 'rapm_rolling'`
+   - Log a summary: games ingested, players updated, timestamp
+
+**P5.2 — Scheduling Infrastructure**
+4. Set up Windows Task Scheduler to run `nightly_job.py` automatically:
+   - Create `scripts/run_nightly.bat` — a batch file that activates the `uv` environment and runs `nightly_job.py` with `PYTHONPATH` set correctly
+   - Create `scripts/install_task.ps1` — a PowerShell script that registers the task in Windows Task Scheduler:
+     - Trigger: daily at 4:00 AM (after games have finished and data is available)
+     - Action: run `run_nightly.bat`
+     - Working directory: project root
+     - On failure: retry once after 30 minutes
+   - Document the setup steps in a `SETUP.md` (or section in README) so it can be re-installed on a new machine
+   - Log output to `logs/nightly_YYYY-MM-DD.log` — `nightly_job.py` should write structured log lines, and the batch file should redirect stdout/stderr to a dated log file
 
 **Validation:**
 - Rolling ratings should be correlated with but not identical to full-season ratings
 - Players who had a strong recent stretch should rate higher in rolling vs full-season
 - Window metadata in `rapm_ratings` should show correct date ranges
+- Run `scripts/install_task.ps1` and verify the task appears in Task Scheduler; trigger it manually and confirm `logs/` gets a log file with expected output
 
-**Output:** Nightly-updatable rolling RAPM pipeline.
+**Output:** Nightly-updatable rolling RAPM pipeline that runs automatically each morning.
 
 ---
 

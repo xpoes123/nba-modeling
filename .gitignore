@@ -43,5 +43,8 @@ notebooks/.ipynb_checkpoints/
 .DS_Store
 Thumbs.db
 
+# Nightly job logs
+logs/*.log
+
 # Claude Code local settings (permissions are machine-specific)
 .claude/settings.local.json

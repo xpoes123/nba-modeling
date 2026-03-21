@@ -1,7 +1,7 @@
 # Current Status
 
 ## Current Phase
-**P5 — COMPLETE** → ready to start P6
+**P6 — COMPLETE** → all phases done (P0–P6)
 
 ## Completed
 - **P0**: config.py, db/schema.sql, db/init_db.py — validated
@@ -15,6 +15,10 @@
   - First run: ingested 7 new games (Mar 20), 567 players re-rated with phase='rapm_rolling'
   - Rolling window union start = 2025-10-21 (season start — see gotcha below)
   - Task Scheduler: scripts/install_task.ps1 registers daily 4am job
+- **P6**: models/elo.py + models/composite.py + nightly_job.py integration — validated
+  - 29/29 tests pass; composite phase='elo'; Elo delta stdev=0.24 pts/100, mean≈0
+  - Top 10: Jokic +5.80, SGA +5.41, Wemby +5.31 overall (composite)
+  - K calibrated: ELO_K_OFFENSE_DEFENSE=0.02, ELO_K_PACE=0.01 (K=2.0 was 80x too large)
 
 ## Key Design Decisions Locked In
 - Dependency management: `uv` + `pyproject.toml`
@@ -32,6 +36,15 @@
 - **CLAUDE.md overrides README on rapm.py purity**: rolling RAPM orchestration lives in
   `pipeline/nightly_job.py` (not models/rapm.py), keeping models/rapm.py pure (no DB I/O)
 
+## P6 Architecture
+- `models/elo.py` — PURE: sigmoid, elo_update (mutates in-place), replay_game_elo (takes possessions list)
+- `models/composite.py` — update_current_ratings: joins rapm_rolling + latest elo_ratings → current_ratings
+- `pipeline/nightly_job.py` Elo helpers: _load_elo_state, _get_unreplayed_game_ids, _load_game_possessions,
+  _upsert_elo_ratings, run_elo_replay — all DB I/O here, pure logic in models/elo.py
+- Nightly job flow: ingest → league_avgs → rolling_RAPM → elo_replay → composite_ratings
+- Elo K calibration: K=0.02 (offense/defense), K=0.01 (pace). Original K=2.0 gave 80x too-large
+  random walk over a full season (σ≈49 vs target σ≈0.5 for "micro-adjustments < 10% of RAPM")
+
 ## P5 Architecture
 - `ingestion/ingest_daily.py` — `get_new_game_ids()` + `ingest_new_games()`: fetches full season
   schedule from nba_api, filters to IDs not in games table, parses + ETLs with rate limiting
@@ -42,7 +55,7 @@
 - nightly_job.py logs to stdout only; bat file handles file redirect
 
 ## What's Pending
-- P6: models/elo.py + models/composite.py + integrate into nightly_job.py
+- Downstream models (spread_model.py, live_model.py, lineup_optimizer.py) — not specced yet
 
 ## Known Issues / Gotchas
 - **Rolling window = full season right now**: union window logic takes min(all players' window starts).
@@ -67,11 +80,13 @@
 
 ## DB State (as of 2026-03-21)
 - 1041 games, ~55,923 stints, ~201,361 possessions, 567 players rated
-- current_ratings: phase='rapm_rolling' (P5 overwrote P4's rapm_full)
+- current_ratings: phase='elo' (P6 composite — RAPM base + Elo delta)
 - rapm_ratings: has both rapm_full (historical) and rapm_rolling (latest) rows
+- elo_ratings: 22,572 rows (per-player-per-game cumulative deltas)
 
 ## Next Steps
-1. Start P6: Elo layer
-   - models/elo.py — sigmoid, elo_update, replay_game_elo, reset_elo_to_rapm
-   - models/composite.py — update_current_ratings combining RAPM base + Elo delta
-   - Integrate into pipeline/nightly_job.py: after rolling RAPM, replay today's games via Elo
+- P0–P6 complete. Core rating engine is done.
+- Downstream work (not yet specced):
+  - Spread model (downstream/spread_model.py) — predict game spreads from ratings
+  - Live model (downstream/live_model.py) — in-game simulation using per-possession Elo
+  - Lineup optimizer (downstream/lineup_optimizer.py)

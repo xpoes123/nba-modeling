@@ -4,7 +4,7 @@ Docs: https://the-odds-api.com/liveapi/guides/v4/
 Sport key: basketball_nba
 """
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta
 from typing import TypedDict
 
 import requests
@@ -71,7 +71,12 @@ def _parse_game(event: dict) -> GameOdds:
     home_team = event["home_team"]
     away_team = event["away_team"]
     commence_time = event["commence_time"]
-    game_date = commence_time[:10]  # YYYY-MM-DD
+    # Convert UTC commence_time to US Eastern calendar date.
+    # NBA late games tip at ~10pm ET = ~2am UTC next day, so UTC date would be wrong.
+    from zoneinfo import ZoneInfo
+    dt_utc = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+    dt_et = dt_utc.astimezone(ZoneInfo("America/New_York"))
+    game_date = dt_et.date().isoformat()  # YYYY-MM-DD in US Eastern
 
     market_spread: float | None = None
     market_total: float | None = None
@@ -150,11 +155,13 @@ def get_nba_odds(
     }
 
     if target_date is not None:
-        # commenceTimeTo filters to games starting before a time;
-        # commenceTimeFrom filters to games after a time.
-        # We want games on target_date (UTC), so bracket the full day.
-        params["commenceTimeFrom"] = f"{target_date.isoformat()}T00:00:00Z"
-        params["commenceTimeTo"] = f"{target_date.isoformat()}T23:59:59Z"
+        # NBA games tip off between ~noon ET and ~10:30pm ET.
+        # In UTC (EDT = UTC-4 in March), that's 4pm–2:30am UTC — straddling midnight UTC.
+        # Use 6am UTC as the day boundary (= 2am ET, between any two consecutive game days)
+        # so Mar 21 and Mar 22 windows don't overlap.
+        next_day = target_date + timedelta(days=1)
+        params["commenceTimeFrom"] = f"{target_date.isoformat()}T06:00:00Z"
+        params["commenceTimeTo"] = f"{next_day.isoformat()}T06:00:00Z"
 
     url = f"{_BASE_URL}/sports/{_SPORT}/odds"
 

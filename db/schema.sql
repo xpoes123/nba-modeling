@@ -151,6 +151,33 @@ CREATE TABLE IF NOT EXISTS current_ratings (
 );
 
 -- ---------------------------------------------------------------------------
+-- predictions: pre-game model predictions vs market lines
+-- predicted_spread > 0 means home team is favored in our model
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS predictions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    odds_event_id       TEXT,                       -- Odds API event ID
+    game_date           TEXT    NOT NULL,            -- YYYY-MM-DD
+    home_team_id        TEXT,                        -- nba.com team ID (if mappable)
+    away_team_id        TEXT,                        -- nba.com team ID (if mappable)
+    home_team_name      TEXT    NOT NULL,
+    away_team_name      TEXT    NOT NULL,
+    predicted_spread    REAL,                        -- home margin (positive = home favored)
+    predicted_win_prob  REAL,                        -- P(home wins), 0-1
+    sim_std             REAL,                        -- Monte Carlo std dev
+    market_spread       REAL,                        -- Odds API home spread
+    market_win_prob     REAL,                        -- vig-adjusted implied P(home wins)
+    market_total        REAL,                        -- over/under line
+    spread_edge         REAL,                        -- predicted_spread - market_spread
+    win_prob_edge       REAL,                        -- predicted_win_prob - market_win_prob
+    home_b2b            INTEGER NOT NULL DEFAULT 0,
+    away_b2b            INTEGER NOT NULL DEFAULT 0,
+    n_simulations       INTEGER,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(game_date, home_team_name, away_team_name)
+);
+
+-- ---------------------------------------------------------------------------
 -- Indexes for common query patterns
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_games_season

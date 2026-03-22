@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Paths
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "db", "nba_ratings.db")
@@ -27,8 +31,8 @@ ELO_K_PACE = 0.01
 BACKFILL_SLEEP_SECONDS = 2.5
 
 # External API keys
-ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "feff262b460a0ec112a25804b8589786")
-BALLDONTLIE_API_KEY = os.environ.get("BALLDONTLIE_API_KEY", "9ebae8b8-5495-4830-a403-9ac46eba4588")
+ODDS_API_KEY = os.environ["ODDS_API_KEY"]
+BALLDONTLIE_API_KEY = os.environ["BALLDONTLIE_API_KEY"]
 
 # Predictions
 MONTE_CARLO_SIMULATIONS = 1000

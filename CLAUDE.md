@@ -141,6 +141,18 @@ SELECT
 - **Never run RAPM on a partial backfill** — players whose teams haven't played yet will have biased (inflated) estimates due to sparse data
 - **nba_api and stats.nba.com are unofficial** — handle failures and rate limits gracefully in all ingestion code; never let a single game failure abort the whole backfill
 
+## Future Model Directions
+
+Tracked here so Claude knows what to look for when starting new model work. Full analysis lives in `memory/model-analysis.md`.
+
+- **Matchup-specific adjustments via play style clustering** — current RAPM treats all
+  opponents as the average team. Cluster teams into style archetypes (pace, paint vs. 3-point
+  tendency, etc.) using features already in the DB, then check whether calibration residuals
+  correlate with cluster-pair matchups. If signal exists, add interaction terms to calibration.
+  **Constraint:** needs 2+ seasons of H2H data for robust cluster-pair estimates; prototype with
+  current season first and validate via backtest before touching `calibration_coeffs.json`.
+  David's examples: OKC vs SAS/MIL, LAL vs ORL — track residuals for those style matchups.
+
 ## Skills
 
 These are implemented as Claude Code slash commands in `.claude/commands/`. Use them to handle common operations without re-explaining context each time.
@@ -150,11 +162,33 @@ These are implemented as Claude Code slash commands in `.claude/commands/`. Use 
 - **`/validate-ratings`** — Sanity-check `current_ratings`. Prints top/bottom 20 players, checks distribution stats, flags known stars (Jokic, SGA, Luka) and outliers
 - **`/run-backfill`** — Start or resume the full-season backfill with pre-flight checks. Reports progress and failures
 - **`/run-rapm`** — Fit RAPM (full-season or rolling depending on phase) with prerequisite checks. Calls `/validate-ratings` on completion
+- **`/analyze-game`** — Deep-dive on a specific game: why did our model miss? Spawns a subagent to trace lineup profiles, player ratings, raw margin math, and injury filter accuracy. Writes findings to `memory/game-analyses/YYYY-MM-DD-AWAY-HOME.md` and appends a summary to `memory/model-analysis.md`. Usage: `/analyze-game 2026-03-21 GSW ATL`
+
+## Context Management — Protecting Main Context
+
+Deep analysis (DB queries, multi-file reads, math traces) burns context fast. Follow these rules:
+
+- **Use subagents for any analysis requiring more than ~5 DB queries or reading multiple files.**
+  Delegate to `Task(subagent_type="general-purpose")` or `Task(subagent_type="Explore")`. Have
+  the subagent write its findings to `memory/game-analyses/YYYY-MM-DD-AWAY-HOME.md`, then read
+  that summary file in the main context. This keeps the main context clean for reasoning.
+- **Use the `/analyze-game` skill** for post-game diagnostic work (why did we miss a game?).
+  It spawns a subagent, does the full computation, and writes a persistent analysis file.
+- **For one-off DB lookups** (a single `SELECT`, checking a count), use Bash directly — no need
+  for a subagent.
+- **Write findings to files, not just to the conversation.** If you do deep analysis inline,
+  always end by writing a summary to `memory/model-analysis.md` or a new
+  `memory/game-analyses/` file before the context grows too large to act on it.
+- **If context is already large**, stop mid-analysis, write what you have, and instruct David
+  to start a fresh session with `/fresh-eyes` before continuing.
 
 ## Memory & Session Continuity
 
 - `memory/current-status.md` is the source of truth for session state: current phase (P0–P7), last validated milestone, known issues, and next steps
 - `memory/model-analysis.md` is the source of truth for prediction model quality: calibration results, known gaps, improvement backlog, and per-game prediction logs. **Read this before doing any work on the downstream prediction engine.**
+- `memory/game-analyses/` — per-game deep-dive files written by `/analyze-game`. Named
+  `YYYY-MM-DD-AWAY-HOME.md` (e.g. `2026-03-21-GSW-ATL.md`). Reference these from
+  `model-analysis.md` rather than re-running the analysis inline.
 - **Before ending any session**, always update `memory/current-status.md` with:
   - Current phase and whether it's complete
   - Everything completed this session
@@ -226,3 +260,15 @@ rules strictly:
   - "Is this edge likely due to a real injury or a data gap?"
 - **The DB is ground truth for lineups and usage** — possession history in `possessions` table
   is more reliable than any internal knowledge about how teams use players.
+- **When diagnosing a specific game miss, pull the actual box score via BallDontLie API** to see
+  exactly who played and how many minutes. This is ground truth for the actual lineup vs. what
+  our model assumed. Use `GET /v1/stats?game_ids[]=<game_id>` (requires paid BDL tier for stats
+  endpoints — free tier only has /v1/teams). As an alternative, `nba_api.BoxScoreTraditionalV3`
+  is already a project dependency and works for any historical game:
+  ```python
+  from nba_api.stats.endpoints import BoxScoreTraditionalV3
+  bs = BoxScoreTraditionalV3(game_id='0022501026')
+  print(bs.player_stats.get_data_frame()[['playerName','minutes','points']])
+  ```
+  Use this to compare: (a) who was actually in the lineup vs. who ESPN reported as Out/Doubtful,
+  (b) actual minutes played vs. our possession-share estimates, and (c) confirm DNP reasons.

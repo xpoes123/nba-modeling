@@ -338,13 +338,13 @@ Skipped: 48 games (insufficient early-season lineup history).
 
 MAE=5.56, RMSE=7.28, Corr=0.846, Dir=8/9 (88.9%).
 
-**GSW @ ATL deep dive:** Model predicted ATL +1.6 (home margin). Closing market: ATL -9.5.
-Actual: ATL +16. GSW active roster: Podziemski, Santos, Post, Melton, Green + bench.
-DNPs: Porzingis (back), Moody (wrist), GPII (hip), Horford (DNP). ATL: Jalen Johnson absent.
-With actual roster substituted in model: ATL +1.6 (barely moves — only +0.9 shift).
-**Root cause:** RAPM compression means losing 28.8% of GSW minutes only shifts raw margin +0.11 pts
-(×alpha = +0.9 pts). Market moved ~8 pts — understands depth cliff that ridge regularization
-averages away. **Closing line is the right benchmark**, not game score.
+**GSW @ ATL deep dive:** → [Full analysis](game-analyses/2026-03-21-GSW-ATL.md)
+Model predicted ATL +0.86 (home margin). Closing market: ATL -9.5. Actual: ATL +16.
+Root causes: (1) ATL depth drag — Okongwu/Risacher/Landale/Kispert hold 39% of possessions
+at −1 to −2.5 overall, diluting team OFF to only +0.268. (2) Formula near-cancellation —
+(ATL_off − GSW_def) ≈ (GSW_off − ATL_def) ≈ 0, raw_margin only 0.032 pts/game. (3) Curry +
+Butler already absent from 15-game window — model correctly baked in, but gap vs market is
+still 9 pts because market values depth cliff more than RAPM linear averages do.
 
 ### Mar 16–21, 2026 — HCA approach comparison (48 games, Approach 3 coefficients)
 

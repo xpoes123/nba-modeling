@@ -20,7 +20,10 @@
       "Bash(uv run pytest:*)",
       "Bash(uv run:*)",
       "Bash(PYTHONPATH=/c/Users/David/CS/hobbies/sports/nba_clv_modeling uv run python:*)",
-      "Bash(PYTHONPATH=/c/Users/David/CS/hobbies/sports/nba_clv_modeling uv run pytest:*)"
+      "Bash(PYTHONPATH=/c/Users/David/CS/hobbies/sports/nba_clv_modeling uv run pytest:*)",
+      "Bash(PYTHONPATH=. uv run python:*)",
+      "Bash(PYTHONPATH=. uv run pytest:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

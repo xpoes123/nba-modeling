@@ -75,8 +75,12 @@ def _get_team_profiles(
     conn: sqlite3.Connection,
     before_date: str,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
-) -> dict[str, list[float]]:
-    """Possession shares from the n games before before_date."""
+) -> tuple[dict[str, list[float]], int]:
+    """Possession shares from the n games before before_date.
+
+    Returns (player_shares, n_window_games) where n_window_games is the actual
+    number of games found (may be less than n_games early in the season).
+    """
     rows = conn.execute(
         """
         SELECT game_id FROM games
@@ -87,7 +91,7 @@ def _get_team_profiles(
     ).fetchall()
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
-        return {}
+        return {}, 0
 
     placeholders = ",".join("?" * len(game_ids))
     poss_df = pd.read_sql(
@@ -100,7 +104,7 @@ def _get_team_profiles(
         params=[team_id] + game_ids,
     )
     if poss_df.empty:
-        return {}
+        return {}, len(game_ids)
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
     player_shares: dict[str, list[float]] = {}
@@ -112,7 +116,7 @@ def _get_team_profiles(
                 counts[pid] = counts.get(pid, 0) + 1
         for pid, cnt in counts.items():
             player_shares.setdefault(pid, []).append(cnt / (n_poss * 5))
-    return player_shares
+    return player_shares, len(game_ids)
 
 
 def _build_minutes_profile(
@@ -122,9 +126,20 @@ def _build_minutes_profile(
 ) -> tuple[MinutesProfile, float]:
     """Build lineup profile from possession history before before_date.
 
-    Returns (MinutesProfile, coverage_ratio). No injury filtering.
+    Each player's weight is availability-discounted:
+        effective_share = mean_share_when_played × (games_appeared / games_in_window)
+
+    This means a player who appeared in 9 of 15 games gets 60% of their per-game
+    share as their effective contribution — the remaining 40% is implicitly league
+    average (someone else covered those possessions). Players with many DNPs are
+    naturally downweighted without requiring explicit injury data.
+
+    Returns (MinutesProfile, coverage_ratio).
     """
-    profiles = _get_team_profiles(team_id, conn, before_date)
+    profiles, n_window_games = _get_team_profiles(team_id, conn, before_date)
+    if n_window_games == 0:
+        return MinutesProfile(), 1.0
+
     result = MinutesProfile()
     total_weight = 0.0
     available_weight = 0.0
@@ -132,7 +147,9 @@ def _build_minutes_profile(
     for pid, shares in profiles.items():
         if len(shares) < _MIN_GAMES:
             continue
-        ms = mean(shares)
+        # Availability discount: weight by fraction of games the player appeared in
+        availability = len(shares) / n_window_games
+        ms = mean(shares) * availability
         total_weight += ms
         available_weight += ms
         sd = stdev(shares) if len(shares) > 1 else 0.03

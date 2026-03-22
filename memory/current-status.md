@@ -25,13 +25,14 @@
   - downstream/lineup_sampler.py — pure Monte Carlo simulation (N=1000)
   - downstream/odds_client.py — Odds API wrapper (spreads, moneylines, totals)
   - downstream/espn_client.py — ESPN public injury API (no auth needed)
-  - downstream/calibration.py — OLS fit → calibration_coeffs.json
+  - downstream/calibration.py — OLS + James-Stein (EB) shrinkage → calibration_coeffs.json
   - downstream/predictions.py — daily orchestration, writes to `predictions` table
   - scripts/run_predictions.bat — daily runner (run after nightly_job)
-  - Calibration v1: α=7.98, HCA=+2.2 pts, B2B home=-3.4 pts, σ=13.4 pts, val_corr=0.54
-  - Calibration v2 (2026-03-21): team-specific HCA (30 dummies). α=8.48, HCA avg=+2.11 pts,
-    B2B home=-3.20 pts, σ=13.18 pts, val_corr=0.470. Val corr regressed vs v1 — overfitting.
-    Next: ridge regularization on team dummies to recover val performance.
+  - Calibration v3 (2026-03-22): EB shrinkage now implemented in calibration.py directly.
+    α=8.46, HCA=+2.01 pts (global, EB-collapsed), B2B home=-3.07 pts, B2B away=+2.09 pts,
+    σ=13.20 pts, val_corr=0.548. Full-season backtest corr=0.506 (with availability discount).
+  - Availability discount (2026-03-22): both backtest.py and predictions.py now weight each
+    player by mean_share × (games_appeared / games_in_window). DNP-heavy players downweighted.
 
 ## Key Design Decisions Locked In
 - Dependency management: `uv` + `pyproject.toml`
@@ -123,18 +124,28 @@
 - predictions: 6 rows (2026-03-22 slate, first predictions run)
 
 ## Next Steps
-1. **Ridge regularization on team HCA dummies** — recover val corr regression from 0.470 → ~0.535.
-   Two-stage fit: raw_margin + B2B unpenalized, 30 team dummies regularized with Ridge.
-   File: `downstream/calibration.py`
-2. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
-   to shrink predictions toward zero for depleted teams (closes large injury-game edges).
-3. **Outcome tracking pipeline** — compare predictions in DB to actual final scores.
+1. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
+   to calibration to further shrink predictions for depleted teams. Availability discount helps
+   but ridge compression limits injury-game accuracy; a coverage penalty is more direct.
+2. **Outcome tracking pipeline** — compare predictions in DB to actual final scores.
+3. **Closing line value (CLV) tracking** — compare model predictions to closing market lines
+   (not just actual scores). Closing line is better benchmark for model quality assessment.
 4. See `memory/model-analysis.md` for full improvement backlog.
+
+## Completed This Session (2026-03-22)
+- **EB calibration in production code**: merged James-Stein shrinkage from `test_hca_approach3_eb.py`
+  into `downstream/calibration.py`. Re-running `calibration.py` now natively produces EB coefficients.
+  Old OLS-with-30-dummies code removed from production path. 64/64 tests pass.
+- **Availability discount**: both `backtest.py::_build_minutes_profile` and
+  `predictions.py::_build_minutes_profile_from_db` now apply
+  `effective_share = mean_share × (games_appeared / window_games)`. Players with many DNPs
+  get proportionally less weight. Full-season improvement: MAE 11.06→10.84, corr 0.490→0.506.
+- **GSW @ ATL diagnosis**: RAPM ridge compression limits injury-game accuracy. Closing line
+  (ATL -9.5) is right benchmark vs actual score (+16). Documented in model-analysis.md.
 
 ## Completed This Session (2026-03-21)
 - Possession share redistribution fix: `_build_minutes_profile_from_db()` now scales remaining
-  players' minutes by `1/coverage_ratio` after injury exclusion. Mean-neutral (shares_from_minutes
-  already normalizes in simulate_game), but semantically correct and std_minutes now proportional.
+  players' minutes by `1/coverage_ratio` after injury exclusion. Mean-neutral, semantically correct.
   64/64 tests pass (5 new in tests/test_predictions.py).
 - Added NBA Domain Knowledge Rules to CLAUDE.md: always backtest, never rely on Claude's internal
   NBA knowledge, ask David for sanity checks on domain-specific questions.

@@ -1,4 +1,16 @@
-"""Calibration: fit OLS on historical games to map raw RAPM margins → actual margins.
+"""Calibration: fit OLS + James-Stein (Empirical Bayes) shrinkage on historical games.
+
+Two-step process:
+  1. OLS with 30 team dummies to get alpha, per-team HCA raw estimates, and B2B coefficients.
+  2. James-Stein shrinkage: pull each team's raw HCA toward the grand mean by a data-driven
+     factor. If sigma2_between <= 0 (no detectable real team variation), all teams pool to
+     the grand mean.
+
+Shrinkage formulas:
+    sigma2_within_i = sigma_residual^2 / n_home_games_i
+    sigma2_between  = max(0, var(raw_hca_estimates) - mean(sigma2_within_i))
+    B_i             = sigma2_within_i / (sigma2_within_i + sigma2_between)
+    hca_shrunk_i    = grand_mean + (1 - B_i) * (hca_raw_i - grand_mean)
 
 Run once (or periodically) to generate calibration_coeffs.json.
 
@@ -6,8 +18,8 @@ Usage:
     PYTHONPATH=. uv run python downstream/calibration.py
 
 Outputs: downstream/calibration_coeffs.json with keys:
-    alpha, beta_hca, beta_b2b_home, beta_b2b_away, sigma_residual,
-    train_rmse, val_rmse, train_corr, val_corr, n_train, n_val
+    alpha, beta_hca, beta_hca_by_team, beta_b2b_home, beta_b2b_away, sigma_residual,
+    train_rmse, val_rmse, train_corr, val_corr, n_train, n_val, sigma2_between, shrinkage_mean
 """
 import json
 import logging
@@ -236,37 +248,90 @@ def run_calibration(
 
     X_train = _features(train)
     y_train = train["actual_margin"].values
-    X_val = _features(val)
     y_val = val["actual_margin"].values
 
     model = LinearRegression(fit_intercept=False)
     model.fit(X_train, y_train)
 
+    # --- Step 1: Extract raw OLS coefficients ---
     n_teams = len(_TEAM_IDS)
     alpha = float(model.coef_[0])
-    beta_hca_by_team: dict[str, float] = {
+    raw_hca_by_team: dict[str, float] = {
         tid: float(model.coef_[i + 1]) for i, tid in enumerate(_TEAM_IDS)
     }
     beta_b2b_home = float(model.coef_[1 + n_teams])
     beta_b2b_away = float(model.coef_[1 + n_teams + 1])
-    # League-average HCA (fallback for unknown teams)
-    beta_hca = float(np.mean(list(beta_hca_by_team.values())))
 
-    # Residual sigma on full training set (used for win probability)
-    train_preds = model.predict(X_train)
-    residuals = y_train - train_preds
+    # Residual sigma from OLS training fit (used for win probability and shrinkage)
+    train_preds_ols = model.predict(X_train)
+    residuals = y_train - train_preds_ols
     sigma_residual = float(np.std(residuals))
+    sigma2_residual = sigma_residual ** 2
+
+    raw_hca_values = np.array(list(raw_hca_by_team.values()))
+    grand_mean = float(np.mean(raw_hca_values))
+
+    # --- Step 2: James-Stein shrinkage of team HCAs toward grand mean ---
+
+    # Count actual home games per team in the training set
+    n_home_games_per_team: dict[str, int] = {tid: 0 for tid in _TEAM_IDS}
+    for _, row in train.iterrows():
+        n_home_games_per_team[row["home_team_id"]] += 1
+
+    # Sampling variance of each team's raw estimate
+    sigma2_within = {
+        tid: sigma2_residual / max(n_home_games_per_team[tid], 1)
+        for tid in _TEAM_IDS
+    }
+
+    # True between-team variance (clamped to 0 if undetectable)
+    var_raw = float(np.var(raw_hca_values, ddof=0))
+    mean_sigma2_within = float(np.mean(list(sigma2_within.values())))
+    sigma2_between = max(0.0, var_raw - mean_sigma2_within)
+
+    logger.info("--- James-Stein Shrinkage Diagnostics ---")
+    logger.info("  sigma_residual:       %.4f pts", sigma_residual)
+    logger.info("  var(raw HCAs):        %.4f", var_raw)
+    logger.info("  mean(sigma2_within):  %.4f", mean_sigma2_within)
+    logger.info("  sigma2_between:       %.4f  (real team variation detected: %s)",
+                sigma2_between, sigma2_between > 0)
+
+    shrunk_hca_by_team: dict[str, float] = {}
+    B_by_team: dict[str, float] = {}
+
+    if sigma2_between <= 0:
+        logger.info("  sigma2_between <= 0 — pooling all teams to grand mean")
+        for tid in _TEAM_IDS:
+            shrunk_hca_by_team[tid] = grand_mean
+            B_by_team[tid] = 1.0
+    else:
+        for tid in _TEAM_IDS:
+            B_i = sigma2_within[tid] / (sigma2_within[tid] + sigma2_between)
+            shrunk_hca_by_team[tid] = grand_mean + (1.0 - B_i) * (raw_hca_by_team[tid] - grand_mean)
+            B_by_team[tid] = B_i
+
+    shrinkage_mean = float(np.mean(list(B_by_team.values())))
+
+    # --- Evaluate using shrunk HCAs (not raw OLS predictions) ---
+    def _predict_shrunk(df: pd.DataFrame) -> np.ndarray:
+        preds = alpha * df["raw_margin"].values
+        preds += np.array([shrunk_hca_by_team[tid] for tid in df["home_team_id"]])
+        preds += beta_b2b_home * df["home_b2b"].values
+        preds += beta_b2b_away * df["away_b2b"].values
+        return preds
+
+    train_preds = _predict_shrunk(train)
+    val_preds = _predict_shrunk(val)
 
     train_rmse = float(root_mean_squared_error(y_train, train_preds))
-    val_preds = model.predict(X_val)
     val_rmse = float(root_mean_squared_error(y_val, val_preds))
     train_corr = float(np.corrcoef(y_train, train_preds)[0, 1])
     val_corr = float(np.corrcoef(y_val, val_preds)[0, 1])
 
     coeffs = {
         "alpha": alpha,
-        "beta_hca": beta_hca,
-        "beta_hca_by_team": beta_hca_by_team,
+        "beta_hca": grand_mean,
+        "beta_hca_by_team": shrunk_hca_by_team,
         "beta_b2b_home": beta_b2b_home,
         "beta_b2b_away": beta_b2b_away,
         "sigma_residual": sigma_residual,
@@ -277,27 +342,32 @@ def run_calibration(
         "n_train": len(train),
         "n_val": len(val),
         "season": season,
+        "sigma2_between": sigma2_between,
+        "shrinkage_mean": shrinkage_mean,
     }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(coeffs, f, indent=2)
 
-    logger.info("=== Calibration Results ===")
+    logger.info("=== Calibration Results (EB-shrunk) ===")
     logger.info("  alpha (raw margin scale): %.4f", alpha)
-    logger.info("  beta_hca (league avg):    %.4f pts", beta_hca)
+    logger.info("  beta_hca (grand mean):    %.4f pts", grand_mean)
     logger.info("  beta_b2b_home:            %.4f pts", beta_b2b_home)
     logger.info("  beta_b2b_away:            %.4f pts", beta_b2b_away)
     logger.info("  sigma_residual:           %.2f pts", sigma_residual)
+    logger.info("  sigma2_between:           %.4f", sigma2_between)
+    logger.info("  avg shrinkage B_i:        %.4f  (1.0 = full pool)", shrinkage_mean)
     logger.info("  Train RMSE: %.2f  corr: %.3f", train_rmse, train_corr)
     logger.info("  Val   RMSE: %.2f  corr: %.3f", val_rmse, val_corr)
 
-    # Log team HCAs sorted descending so the outliers are visible
-    sorted_hca = sorted(beta_hca_by_team.items(), key=lambda x: x[1], reverse=True)
-    logger.info("  Team HCAs (sorted):")
-    for tid, hca in sorted_hca:
+    # Log raw vs shrunk HCAs sorted descending
+    sorted_raw = sorted(raw_hca_by_team.items(), key=lambda x: x[1], reverse=True)
+    logger.info("  Team HCAs — raw vs shrunk (sorted by raw):")
+    for tid, raw_hca in sorted_raw:
         abbrev = NBA_TEAM_MAP[tid]["abbrev"]
-        logger.info("    %s: %+.2f pts", abbrev, hca)
+        shrunk = shrunk_hca_by_team[tid]
+        logger.info("    %s: raw %+.2f → shrunk %+.2f", abbrev, raw_hca, shrunk)
 
     logger.info("Saved to %s", output_path)
 

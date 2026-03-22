@@ -148,8 +148,11 @@ def _get_team_possession_profiles(
     conn: sqlite3.Connection,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     before_date: str | None = None,
-) -> dict[str, list[float]]:
-    """Return player_id → [possession_share_game1, possession_share_game2, ...] for last n games.
+) -> tuple[dict[str, list[float]], int]:
+    """Return (player_shares, n_window_games) for last n games.
+
+    player_shares: player_id → [possession_share_game1, possession_share_game2, ...]
+    n_window_games: actual number of games found (may be < n_games early in season).
 
     Possession share = fraction of the team's offensive possessions a player appeared in.
 
@@ -182,7 +185,7 @@ def _get_team_possession_profiles(
 
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
-        return {}
+        return {}, 0
 
     placeholders = ",".join("?" * len(game_ids))
     poss_df = pd.read_sql(
@@ -196,7 +199,7 @@ def _get_team_possession_profiles(
     )
 
     if poss_df.empty:
-        return {}
+        return {}, len(game_ids)
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
     player_shares: dict[str, list[float]] = {}
@@ -212,7 +215,7 @@ def _get_team_possession_profiles(
             share = cnt / (n_poss * 5)
             player_shares.setdefault(pid, []).append(share)
 
-    return player_shares
+    return player_shares, len(game_ids)
 
 
 def _build_minutes_profile_from_db(
@@ -242,11 +245,20 @@ def _build_minutes_profile_from_db(
         (MinutesProfile, coverage_ratio) where coverage_ratio is the fraction of normal
         possession-weighted minutes that are NOT excluded by injuries (0–1).
     """
-    profiles = _get_team_possession_profiles(team_id, conn, n_games, before_date=before_date)
+    profiles, n_window_games = _get_team_possession_profiles(team_id, conn, n_games, before_date=before_date)
+    if n_window_games == 0:
+        return MinutesProfile(), 1.0
+
     result: MinutesProfile = MinutesProfile()
 
-    # Compute total weight across all qualified players (before injury filter)
-    total_weight = sum(mean(sh) for sh in profiles.values() if len(sh) >= min_games)
+    # Availability-discounted weight: mean_share × (games_appeared / games_in_window).
+    # A player who appeared in 9 of 15 games gets 60% of their per-game share. The
+    # remaining 40% is implicitly league average — someone else covered those possessions.
+    def _effective_share(shares: list[float]) -> float:
+        return mean(shares) * (len(shares) / n_window_games)
+
+    # Total weight across all qualified players (before injury filter)
+    total_weight = sum(_effective_share(sh) for sh in profiles.values() if len(sh) >= min_games)
     available_weight = 0.0
 
     for pid, shares in profiles.items():
@@ -254,18 +266,17 @@ def _build_minutes_profile_from_db(
             continue
 
         name = player_id_to_name.get(pid, "")
-        mean_share = mean(shares)
+        eff_share = _effective_share(shares)
 
         if normalize_name(name) in injured_names:
             logger.debug("Skipping injured player: %s (%s)", name, pid)
             continue
 
-        available_weight += mean_share
+        available_weight += eff_share
         std_share = stdev(shares) if len(shares) > 1 else 0.03
 
-        # Convert possession share → synthetic minutes
-        # A player with 20% possession share plays ~20% of 240 team minutes = 48 min
-        result[pid] = (mean_share * 240, std_share * 240)
+        # Convert availability-discounted share → synthetic minutes
+        result[pid] = (eff_share * 240, std_share * 240)
 
     coverage_ratio = available_weight / total_weight if total_weight > 0 else 1.0
 

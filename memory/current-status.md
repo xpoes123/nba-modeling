@@ -28,9 +28,12 @@
   - downstream/calibration.py — OLS + James-Stein (EB) shrinkage → calibration_coeffs.json
   - downstream/predictions.py — daily orchestration, writes to `predictions` table
   - scripts/run_predictions.bat — daily runner (run after nightly_job)
-  - Calibration v3 (2026-03-22): EB shrinkage now implemented in calibration.py directly.
-    α=8.46, HCA=+2.01 pts (global, EB-collapsed), B2B home=-3.07 pts, B2B away=+2.09 pts,
-    σ=13.20 pts, val_corr=0.548. Full-season backtest corr=0.506 (with availability discount).
+  - Calibration v4 (2026-03-22): defense sign bug fix + EB recalibration.
+    α=6.14, HCA=+2.09 pts, B2B home=-2.40 pts, B2B away=+1.28 pts,
+    σ=13.01 pts, val_corr=0.586. Full-season backtest corr=0.512, dir_acc=70.1% (702/1002).
+    σ²_between=4.9966 (real team HCA variation now detectable; was 0 in v3 due to sign bug).
+  - Calibration v3 (superseded): α=8.46, val_corr=0.548, dir=68.6%. Inflated α compensated
+    for sign bug; EB found σ²_between=0 (artifact of sign bug masking signal).
   - Availability discount (2026-03-22): both backtest.py and predictions.py now weight each
     player by mean_share × (games_appeared / games_in_window). DNP-heavy players downweighted.
 
@@ -133,6 +136,13 @@
 4. See `memory/model-analysis.md` for full improvement backlog.
 
 ## Completed This Session (2026-03-22)
+- **Defense sign bug fix** (2026-03-22, second session): Fixed `compute_raw_margin` in
+  `downstream/team_ratings.py` and inline duplicate in `downstream/calibration.py`.
+  Bug: formula used `(home_off - away_def)` but RAPM defense sign convention is
+  positive=bad/negative=good, so subtraction was backwards. Fix: `(home_off + away_def)`.
+  After recalibration: val_corr 0.548→0.586, backtest dir_acc 68.6%→70.1% (+15 games correct).
+  Bonus: σ²_between went from 0→4.9966 — real team HCA variation now detectable; v3 "full pooling"
+  conclusion was an artifact of the sign bug inflating noise.
 - **EB calibration in production code**: merged James-Stein shrinkage from `test_hca_approach3_eb.py`
   into `downstream/calibration.py`. Re-running `calibration.py` now natively produces EB coefficients.
   Old OLS-with-30-dummies code removed from production path. 64/64 tests pass.

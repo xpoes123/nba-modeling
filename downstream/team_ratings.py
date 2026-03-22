@@ -90,8 +90,11 @@ def compute_raw_margin(
     """Compute raw predicted home margin (points) before calibration adjustments.
 
     Formula:
-        expected_home_PPP = league_avg_ppp + (home_off - away_def) / 100
-        expected_away_PPP = league_avg_ppp + (away_off - home_def) / 100
+        expected_home_PPP = league_avg_ppp + (home_off + away_def) / 100
+        expected_away_PPP = league_avg_ppp + (away_off + home_def) / 100
+
+    Note: defense coef sign convention — positive = bad defender (allows more than avg),
+    negative = good defender (allows fewer). So +away_def means bad away D → home scores more. ✓
         expected_possessions = league_avg_pace + (home_pace + away_pace) / 2
         raw_margin = (expected_home_PPP - expected_away_PPP) * expected_possessions
 
@@ -104,8 +107,8 @@ def compute_raw_margin(
     Returns:
         Raw expected home margin in points (positive = home wins).
     """
-    home_ppp = league_avg_ppp + (home_ratings["offense"] - away_ratings["defense"]) / 100
-    away_ppp = league_avg_ppp + (away_ratings["offense"] - home_ratings["defense"]) / 100
+    home_ppp = league_avg_ppp + (home_ratings["offense"] + away_ratings["defense"]) / 100
+    away_ppp = league_avg_ppp + (away_ratings["offense"] + home_ratings["defense"]) / 100
     expected_pace = league_avg_pace + (home_ratings["pace"] + away_ratings["pace"]) / 2
     return (home_ppp - away_ppp) * expected_pace
 

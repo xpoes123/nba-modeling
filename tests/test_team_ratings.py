@@ -110,12 +110,11 @@ class TestComputeRawMargin:
         home = TeamRatings(offense=0.0, defense=5.0, pace=0.0)
         away = TeamRatings(offense=0.0, defense=0.0, pace=0.0)
         margin = compute_raw_margin(home, away, league_avg_ppp=1.12, league_avg_pace=100.0)
-        # home allows more → home_ppp unchanged, but away_ppp increases
-        # away_ppp = 1.12 + (0 - 5)/100 = 1.07? No: away offense vs home DEFENSE
-        # away_ppp = league_avg + (away_off - home_def)/100 = 1.12 + (0 - 5)/100 = 1.07
-        # home_ppp = league_avg + (home_off - away_def)/100 = 1.12 + (0 - 0)/100 = 1.12
-        # margin = (1.12 - 1.07) * 100 = 5.0
-        assert margin == pytest.approx(5.0)
+        # home defense=5.0 (positive = bad, allows more than avg)
+        # away_ppp = league_avg + (away_off + home_def)/100 = 1.12 + (0 + 5)/100 = 1.17
+        # home_ppp = league_avg + (home_off + away_def)/100 = 1.12 + (0 + 0)/100 = 1.12
+        # margin = (1.12 - 1.17) * 100 = -5.0 → home loses (bad defense hurts home ✓)
+        assert margin == pytest.approx(-5.0)
 
     def test_pace_adjustment_increases_magnitude(self):
         home = TeamRatings(offense=5.0, defense=0.0, pace=5.0)

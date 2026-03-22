@@ -7,27 +7,64 @@ Update this file as we learn from comparing predictions to actual outcomes.
 
 ## Calibration (updated 2026-03-22)
 
-### v3: Global HCA via Empirical Bayes — **DEPLOYED + IMPLEMENTED IN CODE (2026-03-22)**
+### v4: Defense sign bug fix + EB — **DEPLOYED (2026-03-22)**
 
-Empirical Bayes analysis proved that team-specific HCA is undetectable with one season of
-data. EB full-pooling collapses to a single global HCA.
+**Breaking change:** Fixed a fundamental sign bug in `compute_raw_margin` in `downstream/team_ratings.py`
+(and the inline duplicate in `downstream/calibration.py::_build_team_ratings_for_game`).
 
-**2026-03-22 update:** EB shrinkage is now implemented directly in `downstream/calibration.py`
-(previously only in the experimental `test_hca_approach3_eb.py` and manually copied to JSON).
-Re-running `calibration.py` now produces EB coefficients natively. The old v2 OLS-with-30-dummies
-code is gone from the production script. 64/64 tests pass.
+**The bug:** RAPM defense coefficients follow the convention `positive = bad defender (allows more pts)`,
+`negative = good defender (allows fewer pts)`. The formula was:
+```python
+# BUGGY — subtracts defense, so good away defense (negative) ADDS to home scoring (backwards!)
+home_ppp = league_avg_ppp + (home_off - away_def) / 100
+```
+Fix: changed `-` to `+` for defense terms:
+```python
+# CORRECT — bad away defense (positive) → home scores more ✓
+home_ppp = league_avg_ppp + (home_off + away_def) / 100
+```
+This bug caused the model to treat good defenses as if they boosted the opponent's offense.
+The calibration α (8.46→6.14) was inflating raw margins to partially compensate.
+
+With the corrected formula, team-specific HCA variation is now detectable (σ²_between = 4.9966 vs 0).
+Val corr improved from 0.548 → **0.586**, and directional accuracy improved from 68.6% → **70.1%**.
 
 | Coefficient     | Value      | Interpretation                              |
 |-----------------|------------|---------------------------------------------|
-| α (scale)       | 8.46       | Raw RAPM margins need ~8.5x scaling to pts  |
-| β_hca           | +2.01 pts  | Single global HCA (EB-collapsed)            |
-| β_b2b_home      | −3.07 pts  | Home team on B2B                            |
-| β_b2b_away      | +2.09 pts  | Away team on B2B                            |
-| σ_residual      | 13.20 pts  |                                             |
-| Val RMSE        | 14.16 pts  | Best of all approaches tested               |
-| Val corr        | **0.548**  | Best of all approaches tested               |
+| α (scale)       | 6.1435     | Lower than v3 (8.46) — raw margins now bigger|
+| β_hca           | +2.09 pts  | Global HCA (EB grand mean)                  |
+| β_b2b_home      | −2.40 pts  | Home team on B2B                            |
+| β_b2b_away      | +1.28 pts  | Away team on B2B                            |
+| σ_residual      | 13.01 pts  |                                             |
+| σ²_between      | **4.9966** | Real team HCA variation now detectable!     |
+| avg shrinkage   | 0.618      | Partial pooling (was 1.0 / full pool in v3) |
+| Val corr        | **0.586**  | Up from 0.548 in v3                         |
+| Train corr      | 0.508      |                                             |
 
-Post-deploy backtest (Mar 16–21, 48 games): MAE=10.68, RMSE=13.46, corr=**0.664**, dir=83.3%
+Full-season backtest (1002 games): MAE=10.81, corr=0.512, dir=**70.1%** (702/1002).
+Baseline (buggy formula): corr=0.506, MAE=10.84, dir=68.6% (687/1002).
+
+**Notable team HCAs (raw → shrunk):** PHX +8.28→+4.31, GSW +7.91→+4.38, DEN -5.74→-0.72.
+
+---
+
+### v3: Global HCA via Empirical Bayes — **SUPERSEDED by v4 (2026-03-22)**
+
+Empirical Bayes analysis proved that team-specific HCA is undetectable with one season of
+data using the (then-buggy) formula. After the defense sign fix, σ²_between = 4.9966 — real
+team variation IS detectable. The v3 "all teams collapse to global mean" conclusion was an
+artifact of the sign bug inflating noise and masking signal.
+
+| Coefficient     | Value      | Notes                                       |
+|-----------------|------------|---------------------------------------------|
+| α (scale)       | 8.46       | Inflated to compensate for sign bug         |
+| β_hca           | +2.01 pts  | EB grand mean                               |
+| β_b2b_home      | −3.07 pts  |                                             |
+| β_b2b_away      | +2.09 pts  |                                             |
+| σ²_between      | **0.00**   | Was 0 (artifact of sign bug)                |
+| Val corr        | 0.548      | Superseded by v4 (0.586)                    |
+
+Full-season backtest (buggy formula, EB calibration): corr=0.506, dir=68.6%
 
 ---
 
@@ -309,18 +346,20 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 ## Backtest Results
 
-### Full Season 2025-26 (1002 games, EB calibration + availability discount)
+### Full Season 2025-26 (1002 games) — cumulative improvement history
 
-Run 2026-03-22 with EB calibration + availability discount applied.
-
-| Metric       | Baseline (v2 OLS) | With EB + avail. discount | Delta   |
-|--------------|-------------------|---------------------------|---------|
-| MAE          | 11.06 pts         | 10.84 pts                 | −0.22   |
-| Correlation  | 0.490             | 0.506                     | +0.016  |
-| Dir accuracy | 67.9% (680/1002)  | 68.5% (686/1002)          | +0.6%   |
-| Bias         | n/a               | +0.39 pts                 |         |
+| Version       | Change                              | MAE    | Corr  | Dir acc      |
+|---------------|-------------------------------------|--------|-------|--------------|
+| v2 OLS        | baseline                            | 11.06  | 0.490 | 67.9% (680)  |
+| v3 EB         | EB calibration + avail. discount    | 10.84  | 0.506 | 68.6% (687)  |
+| **v4 fixed**  | **defense sign fix + recalibrate**  | 10.81  | 0.512 | **70.1% (702)** |
 
 Skipped: 48 games (insufficient early-season lineup history).
+
+**v4 key insight:** The sign bug caused calibration α to inflate (8.46) to partially offset the
+backwards defense contribution. After the fix, α dropped to 6.14 and σ²_between became detectable
+(4.9966), meaning team-specific HCA adjustments are now meaningful and partially-pooled (B_i ≈ 0.6
+instead of 1.0 full-pool). Getting 15 more game directions right (687→702) is the headline gain.
 
 ### Mar 21, 2026 — 9 games (EB calibration + availability discount)
 

@@ -153,8 +153,8 @@ def _build_team_ratings_for_game(
     home_team = compute_team_ratings(player_ratings, home_shares)
     away_team = compute_team_ratings(player_ratings, away_shares)
 
-    home_ppp = league_avg_ppp + (home_team["offense"] - away_team["defense"]) / 100
-    away_ppp = league_avg_ppp + (away_team["offense"] - home_team["defense"]) / 100
+    home_ppp = league_avg_ppp + (home_team["offense"] + away_team["defense"]) / 100
+    away_ppp = league_avg_ppp + (away_team["offense"] + home_team["defense"]) / 100
     return (home_ppp - away_ppp) * actual_pace
 
 

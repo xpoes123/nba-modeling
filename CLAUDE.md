@@ -189,6 +189,12 @@ Deep analysis (DB queries, multi-file reads, math traces) burns context fast. Fo
 - `memory/game-analyses/` — per-game deep-dive files written by `/analyze-game`. Named
   `YYYY-MM-DD-AWAY-HOME.md` (e.g. `2026-03-21-GSW-ATL.md`). Reference these from
   `model-analysis.md` rather than re-running the analysis inline.
+- **After every substantive response**, update memory files before the conversation continues:
+  - `memory/current-status.md` — if anything changed about the project state, phase, or known issues
+  - `memory/model-analysis.md` — if any prediction quality finding was made (backtest result,
+    new edge identified, calibration change, game diagnosis)
+  - `C:\Users\David\.claude\projects\...\memory\MEMORY.md` — if a stable pattern or gotcha was confirmed
+  Do this proactively, not just at session end. Memory written mid-session survives context compression.
 - **Before ending any session**, always update `memory/current-status.md` with:
   - Current phase and whether it's complete
   - Everything completed this session
@@ -216,6 +222,7 @@ Treat each of the following as a commit boundary:
 - Write descriptive commit messages: what changed and why, not just "update"
 - **Push after every commit** — do not let commits accumulate locally. `git push` immediately after `git commit`
 - Never commit `db/nba_ratings.db` or anything under `data/` — these are local artifacts, not source
+- **Always push memory file updates** (`memory/current-status.md`, `memory/model-analysis.md`) together with the code change that prompted them, in the same commit. Never leave memory updates un-pushed.
 
 **When in doubt, commit.** A commit is cheap; lost work is not.
 
@@ -248,16 +255,20 @@ rules strictly:
   priors — these may be stale or wrong.
 - **Always backtest before concluding anything about model quality.** If a prediction looks
   surprising or a rating looks off, run `downstream/backtest.py` against recent dates rather than
-  judging by intuition.
+  judging by intuition. Do NOT say "this looks reasonable" without a backtest number to back it up.
   ```bash
   PYTHONPATH=. uv run python downstream/backtest.py --start YYYY-MM-DD --end YYYY-MM-DD
   ```
-- **Ask David for sanity checks on NBA-specific questions.** If evaluating whether a player
-  rating, team matchup, or injury-adjusted prediction is reasonable, ask David rather than
-  reasoning from internal knowledge. Examples:
-  - "Does it make sense that X team is being rated as a -8 home underdog here?"
-  - "Is this player typically a starter or bench player this season?"
-  - "Is this edge likely due to a real injury or a data gap?"
+- **Backtest any model change before accepting it.** New calibration coefficient, formula fix,
+  feature addition — always measure the before/after on the full season, not just a spot-check.
+  Report: MAE, correlation, directional accuracy, bias. Compare explicitly to the previous version.
+- **Ask David for sanity checks on NBA-specific questions — proactively, not as a last resort.**
+  David has current-season NBA knowledge that Claude lacks. Ask early and often:
+  - Any time a player's rating seems surprising ("Is X playing starter minutes this year?")
+  - Any time a team spread looks wrong vs. the market ("Does it make sense MIL is -6 here?")
+  - Any time an edge might be driven by an injury or trade ("Did SAC get worse after Fox left?")
+  - Any time lineup estimates look stale ("Has this team's rotation changed recently?")
+  Do not speculate using internal NBA knowledge — ask David instead.
 - **The DB is ground truth for lineups and usage** — possession history in `possessions` table
   is more reliable than any internal knowledge about how teams use players.
 - **When diagnosing a specific game miss, pull the actual box score via BallDontLie API** to see

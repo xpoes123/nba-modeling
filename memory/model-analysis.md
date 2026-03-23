@@ -224,6 +224,22 @@ data on some players), the amplification could cause instability. Monitor over t
 
 ## Prediction Log
 
+### 2026-03-23 slate (10 games predicted) — context notes
+
+| Game               | Our spread    | Market        | Edge    | David's context                                |
+|--------------------|---------------|---------------|---------|------------------------------------------------|
+| TOR @ UTA          | TOR -6.1      | TOR -13.0     | +6.9    | TOR on B2B + Jazz HCA stacking — not a real edge |
+| MEM @ ATL          | ATL -8.5      | ATL -14.0     | -5.5    | ATL should be higher; MEM gutted               |
+| MIL @ LAC          | LAC -8.7      | LAC -13.0     | -4.3    | MIL playing poorly; LAC inconsistent recently  |
+| GSW @ DAL          | DAL -2.0      | GSW -2.5      | +4.5    | LOW SIGNAL; directional flip                   |
+| OKC @ PHI          | OKC -11.9     | OKC -15.5     | +3.6    | HIGH; agree on direction, disagree on margin   |
+| LAL @ DET          | LAL -0.1      | LAL -2.0      | +1.9    | Cade out (collapsed lung); DET 83% coverage    |
+
+**Tanking context (David 2026-03-23):** Kings, Jazz, Wizards, Nets are tanking this season.
+No tanking penalty implemented yet — see improvement item #10 in backlog.
+
+---
+
 ### 2026-03-22 slate (6 games predicted)
 
 | Game               | Our spread    | Market        | Edge    | Notes                          |
@@ -298,6 +314,18 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 3. **Position-adjusted replacement** — when a star is out, give their possessions to
    their typical backup (from historical substitution patterns), not just normalize evenly.
+
+10. **Tanking penalty** — teams with lottery incentives play to lose in the final ~20 games of the
+    season. RAPM ratings don't capture this — a tanking team's starters may be healthy but
+    intentionally losing close games or resting key players without formal injury designation.
+    **2025-26 tanking teams (confirmed by David 2026-03-23):** Kings, Jazz, Wizards, Nets.
+    **Implementation idea:** Add a binary `is_tanking` flag to the spread formula as a calibration
+    feature. Requires knowing which teams own their draft pick (changes year to year — David to
+    provide at season start). Apply a fixed penalty (estimate: -2 to -4 pts against the tanking
+    team) for games in the final 3-4 weeks of the season.
+    **Constraint:** Need to determine which draft picks these teams own/protect — David is source
+    of truth for this. Do not hardcode picks without confirming with David.
+    **Note:** Jazz are both injury-depleted AND tanking — double-discount applies.
 
 4. **Recency weighting** — weight the last 5 games more heavily than games 6–15 in the
    possession-share calculation. Would catch rotation changes faster.

@@ -1,6 +1,6 @@
 # NBA Roster Exceptions — 2025-26 Season
 
-**Last updated: 2026-03-22 by David**
+**Last updated: 2026-03-23 by David**
 
 ## How Claude should use this file
 - Always read this before making any claim about a player's team, status, or availability
@@ -47,6 +47,20 @@ The DB reflects these correctly. Listed here so Claude doesn't contradict them.
 
 ---
 
+## Tanking Teams 2025-26 (own their draft pick — incentivized to lose)
+
+These teams have their draft picks and are tanking for lottery positioning. Apply a tanking penalty
+to their spreads (feature not yet implemented — tracked as improvement item in model-analysis.md).
+
+| Team | Notes |
+|------|-------|
+| Sacramento Kings | Tanking |
+| Utah Jazz | Tanking — also gutted by injuries (see below) |
+| Washington Wizards | Tanking |
+| Brooklyn Nets | Tanking |
+
+---
+
 ## Teams with Severely Depleted Rosters (context for spread analysis)
 
 ### Memphis Grizzlies
@@ -63,6 +77,10 @@ Nearly the entire starting lineup is unavailable.
 Out/suspended: Joel Embiid, Tyrese Maxey, Paul George (suspended, NULL in DB), Kelly Oubre Jr.
 Model reflects Embiid/Maxey absence (both rarely in 15-game window).
 Paul George not in any lineup simulation.
+
+### Detroit Pistons
+Out: Cade Cunningham (collapsed lung). Primary ball-handler and best player on the team.
+Explains 83% coverage on 2026-03-23 LAL @ DET — his possession share is redistributed to backups.
 
 ### Washington Wizards
 Out: Anthony Davis (DB stale as DAL), Trae Young (NULL team), plus multiple others.

@@ -145,6 +145,19 @@ SELECT
 
 Tracked here so Claude knows what to look for when starting new model work. Full analysis lives in `memory/model-analysis.md`.
 
+- **Injury timetable integration** — the current injury model only knows "Out today or not"
+  (ESPN status). It has no concept of expected return dates, which causes two problems:
+  (a) returning stars (e.g. Steph Curry back from 3-month absence) have zero weight in the
+  15-game window despite being active tonight — the model treats them as non-existent;
+  (b) long-term injured players who played some games earlier in the window partially
+  contaminate the team's MinutesProfile even after ESPN exclusion.
+  **Near-term fix (see `memory/injury-modeling-spec.md`):** returning player pre-seeding
+  (Fix A) and hard exclusion for long-term absences (Fix B) — no timetable data needed.
+  **Future:** ingest return-date estimates from ESPN/rotowire, add `injury_timetable` table
+  to DB, modulate the returning-player injection multiplier by `days_until_return`.
+  David is source of truth for which players are expected back "soon" vs weeks away.
+  **Never use Claude's internal NBA knowledge for return timelines — always ask David.**
+
 - **Matchup-specific adjustments via play style clustering** — current RAPM treats all
   opponents as the average team. Cluster teams into style archetypes (pace, paint vs. 3-point
   tendency, etc.) using features already in the DB, then check whether calibration residuals

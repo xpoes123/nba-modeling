@@ -127,14 +127,44 @@
 - predictions: rows for 2026-03-21 slate (9 resolved with actual outcomes) + 2026-03-22 slate
 
 ## Next Steps
-1. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
-   to calibration to further shrink predictions for depleted teams. Availability discount helps
-   but ridge compression limits injury-game accuracy; a coverage penalty is more direct.
-2. **CLV tracking** — will eventually come via a separate repo that David owns; connect that repo
-   to this one when ready. Do not build CLV infrastructure here for now.
-3. See `memory/model-analysis.md` for full improvement backlog.
+1. **Injury modeling improvements** — full spec at `memory/injury-modeling-spec.md`.
+   - **Fix A (do first):** Returning player pre-seeding — inject players who are NOT on the injury
+     list but have < 3 appearances in the 15-game window and strong ratings (overall >= 2.0).
+     Look back 30 games for historical share, inject at 70% of that. Handles Steph Curry cases.
+   - **Fix B (do second):** Hard exclusion for long-term injured — if a player is ESPN Out AND
+     missed the last 5+ consecutive games, zero out their profile before redistribution. Handles
+     Maxey/Giannis window contamination.
+   - Start with `downstream/predictions.py` (Fix A only); `backtest.py` needs Fix B too.
+   - After implementing, run full-season backtest comparison (before/after).
+2. **CLV tracking** — deferred to David's separate repo. Do not build here.
+3. **Tanking penalty** — Kings, Jazz, Wizards, Nets are tanking (2025-26). Spec in
+   `memory/model-analysis.md` item #10. Requires knowing which teams own their draft picks;
+   David confirms this at the start of each season.
+4. See `memory/model-analysis.md` for full improvement backlog.
 
-## Completed This Session (2026-03-23)
+## Completed This Session (2026-03-23) — Predictions + Injury Modeling Spec
+- **Ran today's slate (2026-03-23)**: 10 games predicted. Ran 3 parallel subagents to trace
+  lineup math for MEM@ATL, MIL@LAC, OKC@PHI, GSW@DAL. Key findings:
+  - MEM@ATL (-5.5 vs market): RAPM ridge compression on G-League cast; Rayan Rupert (-5.13 ovr)
+    and others rated too high relative to market. Model gap is structural, not a real edge.
+  - MIL@LAC (-4.3 vs market): Giannis 6/15 recent games (ESPN Out today). Myles Turner
+    (-3.14) + Jericho Sims (-2.90) = 21% of MIL possessions. Depth cliff under-expressed.
+  - OKC@PHI (+3.6, HIGH): SGA missed 5/15 games (discounted share). PHI window includes 7
+    Maxey games, inflating PHI slightly. Market is likely right at OKC -15.5.
+  - GSW@DAL (+4.5, LOW): Steph Curry has 0/15 appearances (last played Dec 12-14, 2025).
+    Already fully excluded. +4.0 injury adjustment = other GSW players (Melton likely).
+    DAL's team-specific HCA (+5.42) is doing most of the work for the directional flip.
+  - TOR@UTA (+6.9, FAIR): TOR B2B + Jazz HCA stacking — not a real edge (David confirmed).
+- **Roster updates**: Added Cade Cunningham (DET, collapsed lung) to rosters.md; Myles Turner
+  confirmed traded to MIL; Steph Curry confirmed returning soon (last played Dec 12-14).
+- **Tanking teams**: Kings, Jazz, Wizards, Nets confirmed by David. Logged in rosters.md
+  and model-analysis.md backlog item #10.
+- **Injury modeling spec written**: `memory/injury-modeling-spec.md` — two fixes (A: returning
+  player pre-seeding, B: long-term exclusion). Fix A is priority. See spec for implementation
+  details, constants, files to modify, and test cases.
+- **CLAUDE.md updated**: Added injury timetable future direction note.
+
+## Completed This Session (2026-03-23) — Roster Skill
 - **`/roster` skill + `downstream/roster_report.py`** (2026-03-23): Live roster + injury lookup
   from DB + ESPN. `downstream/roster_report.py --team ATL/MEM/PHI/--all`. Shows OFF/DEF/OVR
   ratings, recency-weighted possession shares (last 15 games, decay=0.85), and ESPN injury status

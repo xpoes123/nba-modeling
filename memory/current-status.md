@@ -127,12 +127,15 @@
 - predictions: rows for 2026-03-21 slate (9 resolved with actual outcomes) + 2026-03-22 slate
 
 ## Next Steps
-1. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
+1. **`/roster` skill + `downstream/roster_report.py`** — live roster + injury lookup from DB + ESPN.
+   Full spec at `memory/specs/roster-report.md`. Run `/fresh-eyes` then implement the spec.
+   Prevents Claude from using stale internal roster knowledge during game analysis.
+2. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
    to calibration to further shrink predictions for depleted teams. Availability discount helps
    but ridge compression limits injury-game accuracy; a coverage penalty is more direct.
-2. **CLV tracking** — will eventually come via a separate repo that David owns; connect that repo
+3. **CLV tracking** — will eventually come via a separate repo that David owns; connect that repo
    to this one when ready. Do not build CLV infrastructure here for now.
-3. See `memory/model-analysis.md` for full improvement backlog.
+4. See `memory/model-analysis.md` for full improvement backlog.
 
 ## Completed This Session (2026-03-22, second pass)
 - **Outcome tracking pipeline** (2026-03-22): `downstream/track_outcomes.py` resolves predictions

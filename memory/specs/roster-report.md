@@ -1,6 +1,6 @@
 # Spec: downstream/roster_report.py + /roster skill
 
-**Status: NOT STARTED**
+**Status: COMPLETE** (2026-03-23)
 **Priority: Medium** — quality-of-life for game analysis; prevents Claude from using stale internal roster knowledge
 
 ## Background

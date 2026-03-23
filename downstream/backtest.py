@@ -76,15 +76,14 @@ def _get_team_profiles(
     conn: sqlite3.Connection,
     before_date: str,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
-) -> tuple[dict[str, list[tuple[float, float]]], int]:
+) -> tuple[dict[str, list[tuple[float, float]]], list[str]]:
     """Possession shares from the n games before before_date.
 
-    Returns (player_shares, n_window_games) where:
+    Returns (player_shares, game_ids) where:
     - player_shares: player_id → [(raw_share, game_weight), ...]
       game_ids come back ORDER BY game_date DESC so index 0 = most recent game,
       weighted by _RECENCY_DECAY ** slot_index.
-    - n_window_games: actual number of games found (may be less than n_games early
-      in the season).
+    - game_ids: ordered list of game IDs, newest first (len gives n_window_games).
     """
     rows = conn.execute(
         """
@@ -96,7 +95,7 @@ def _get_team_profiles(
     ).fetchall()
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
-        return {}, 0
+        return {}, []
 
     # slot 0 = most recent game (weight 1.0), slot 1 (0.85), …
     game_weight = {gid: _RECENCY_DECAY ** i for i, gid in enumerate(game_ids)}
@@ -112,7 +111,7 @@ def _get_team_profiles(
         params=[team_id] + game_ids,
     )
     if poss_df.empty:
-        return {}, len(game_ids)
+        return {}, game_ids
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
     player_shares: dict[str, list[tuple[float, float]]] = {}
@@ -125,7 +124,7 @@ def _get_team_profiles(
         w = game_weight[gid]
         for pid, cnt in counts.items():
             player_shares.setdefault(pid, []).append((cnt / (n_poss * 5), w))
-    return player_shares, len(game_ids)
+    return player_shares, game_ids
 
 
 def _build_minutes_profile(
@@ -145,7 +144,8 @@ def _build_minutes_profile(
 
     Returns (MinutesProfile, coverage_ratio).
     """
-    profiles, n_window_games = _get_team_profiles(team_id, conn, before_date)
+    profiles, game_ids = _get_team_profiles(team_id, conn, before_date)
+    n_window_games = len(game_ids)
     if n_window_games == 0:
         return MinutesProfile(), 1.0
 

@@ -28,8 +28,14 @@ from config import (
     CALIBRATION_PATH,
     DB_PATH,
     INITIAL_SEASON,
+    LONG_TERM_INJURY_STREAK,
     MONTE_CARLO_SIMULATIONS,
     NBA_TEAM_MAP,
+    RETURNING_PLAYER_EXTENDED_LOOKBACK,
+    RETURNING_PLAYER_MAX_WINDOW_APPEARANCES,
+    RETURNING_PLAYER_MIN_EXTENDED_GAMES,
+    RETURNING_PLAYER_MULTIPLIER,
+    RETURNING_PLAYER_THRESHOLD,
     team_id_from_name,
 )
 from downstream.espn_client import get_nba_injuries, get_out_player_names
@@ -149,11 +155,12 @@ def _get_team_possession_profiles(
     conn: sqlite3.Connection,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     before_date: str | None = None,
-) -> tuple[dict[str, list[tuple[float, float]]], int]:
-    """Return (player_shares, n_window_games) for last n games.
+) -> tuple[dict[str, list[tuple[float, float]]], list[str], dict[str, set[str]]]:
+    """Return (player_shares, game_ids, player_game_ids) for last n games.
 
     player_shares: player_id → [(raw_share, game_weight), ...]
-    n_window_games: actual number of games found (may be < n_games early in season).
+    game_ids: ordered list of game IDs, newest first (index 0 = most recent game)
+    player_game_ids: player_id → set of game_ids the player appeared in
 
     Possession share = fraction of the team's offensive possessions a player appeared in.
     game_ids come back ORDER BY game_date DESC so index 0 = most recent game,
@@ -188,7 +195,7 @@ def _get_team_possession_profiles(
 
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
-        return {}, 0
+        return {}, [], {}
 
     # slot 0 = most recent game (weight 1.0), slot 1 (0.85), …
     game_weight = {gid: _RECENCY_DECAY ** i for i, gid in enumerate(game_ids)}
@@ -205,10 +212,11 @@ def _get_team_possession_profiles(
     )
 
     if poss_df.empty:
-        return {}, len(game_ids)
+        return {}, game_ids, {}
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
     player_shares: dict[str, list[tuple[float, float]]] = {}
+    player_game_ids: dict[str, set[str]] = {}
 
     for game_id, game_df in poss_df.groupby("game_id"):
         n_poss = len(game_df)
@@ -221,8 +229,23 @@ def _get_team_possession_profiles(
             # Normalize: each player appears in 5 of every possession's player slots
             share = cnt / (n_poss * 5)
             player_shares.setdefault(pid, []).append((share, w))
+            player_game_ids.setdefault(pid, set()).add(game_id)
 
-    return player_shares, len(game_ids)
+    return player_shares, game_ids, player_game_ids
+
+
+def _consecutive_recent_absences(game_ids: list[str], player_game_set: set[str]) -> int:
+    """Count consecutive most-recent games a player missed.
+
+    Walks game_ids from most-recent (index 0) forward; stops at the first game the player appeared.
+    """
+    streak = 0
+    for gid in game_ids:
+        if gid not in player_game_set:
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def _build_minutes_profile_from_db(
@@ -230,6 +253,7 @@ def _build_minutes_profile_from_db(
     conn: sqlite3.Connection,
     injured_names: set[str],
     player_id_to_name: dict[str, str],
+    season: str | None = None,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     min_games: int = 3,
     before_date: str | None = None,
@@ -239,11 +263,18 @@ def _build_minutes_profile_from_db(
     Converts possession shares → synthetic minutes (scaled to ~240 total team minutes
     per game = 5 players × 48 minutes).
 
+    Applies two injury modeling fixes when season is provided:
+    - Fix B: Hard-exclude players who are ESPN Out AND missed last LONG_TERM_INJURY_STREAK
+      consecutive games (removes their share from coverage_ratio calculation).
+    - Fix A: Inject returning players who are NOT injured but absent from the recent window
+      and have strong ratings + historical presence in the extended window.
+
     Args:
         team_id: nba.com team ID
         conn: DB connection
         injured_names: set of normalized player names to exclude
         player_id_to_name: player_id → player_name (for injury filtering)
+        season: current season string (e.g. '2025-26'); enables Fix A when provided
         n_games: lookback window
         min_games: minimum appearances to include a player
         before_date: if set (YYYY-MM-DD), only include games strictly before this date
@@ -252,9 +283,32 @@ def _build_minutes_profile_from_db(
         (MinutesProfile, coverage_ratio) where coverage_ratio is the fraction of normal
         possession-weighted minutes that are NOT excluded by injuries (0–1).
     """
-    profiles, n_window_games = _get_team_possession_profiles(team_id, conn, n_games, before_date=before_date)
+    profiles, game_ids, player_game_ids = _get_team_possession_profiles(
+        team_id, conn, n_games, before_date=before_date
+    )
+    n_window_games = len(game_ids)
     if n_window_games == 0:
         return MinutesProfile(), 1.0
+
+    # Fix B: Hard-exclude long-term injured players BEFORE building the profile.
+    # A player who is on the ESPN injury list AND missed the last LONG_TERM_INJURY_STREAK
+    # consecutive games is removed from profiles entirely — their historical share from earlier
+    # in the window should not inflate the team's apparent quality or coverage_ratio.
+    if injured_names and game_ids:
+        to_remove: set[str] = set()
+        for pid in list(profiles.keys()):
+            name = player_id_to_name.get(pid, "")
+            if normalize_name(name) not in injured_names:
+                continue
+            streak = _consecutive_recent_absences(game_ids, player_game_ids.get(pid, set()))
+            if streak >= LONG_TERM_INJURY_STREAK:
+                to_remove.add(pid)
+                logger.debug(
+                    "Fix B: Hard-excluding long-term injured %s (%s), streak=%d games",
+                    name, pid, streak,
+                )
+        for pid in to_remove:
+            del profiles[pid]
 
     result: MinutesProfile = MinutesProfile()
 
@@ -304,10 +358,121 @@ def _build_minutes_profile_from_db(
             {pid: (mean_m * scale, std_m * scale) for pid, (mean_m, std_m) in result.items()}
         )
 
+    # Fix A: Returning player pre-seeding.
+    # After the normal profile is built and coverage-scaled, inject players who:
+    # - Are NOT on the injury list
+    # - Have few appearances in the recent window (effectively absent from our model)
+    # - Have strong current_ratings (overall >= threshold)
+    # - Have significant presence in an extended lookback window
+    # This handles stars returning from long injury absences (e.g. Steph Curry 0/15 appearances).
+    if season is not None:
+        result = _inject_returning_players(
+            result, team_id, conn, injured_names, player_id_to_name,
+            profiles, season, n_window_games, before_date,
+        )
+
     logger.debug(
         "Team %s: %d players, coverage=%.1f%%", team_id, len(result), coverage_ratio * 100
     )
     return result, coverage_ratio
+
+
+def _inject_returning_players(
+    profile: MinutesProfile,
+    team_id: str,
+    conn: sqlite3.Connection,
+    injured_names: set[str],
+    player_id_to_name: dict[str, str],
+    window_profiles: dict[str, list[tuple[float, float]]],
+    season: str,
+    n_window_games: int,
+    before_date: str | None,
+) -> MinutesProfile:
+    """Fix A: Inject returning players absent from the recent window but with strong ratings.
+
+    Queries all players on this team from current_ratings, checks if any qualify for injection:
+    not injured, < RETURNING_PLAYER_MAX_WINDOW_APPEARANCES in recent window, rating >= threshold,
+    and >= RETURNING_PLAYER_MIN_EXTENDED_GAMES in the extended lookback.
+
+    Returns updated profile (original is unchanged if no players qualify).
+    """
+    # Get all players on this team with ratings
+    team_player_rows = conn.execute(
+        """
+        SELECT cr.player_id, cr.overall
+        FROM current_ratings cr
+        JOIN players p ON cr.player_id = p.player_id
+        WHERE p.team_id = ? AND cr.season = ?
+        """,
+        (team_id, season),
+    ).fetchall()
+
+    if not team_player_rows:
+        return profile
+
+    # Query extended window once for the whole team (30 games)
+    ext_profiles, ext_game_ids, _ = _get_team_possession_profiles(
+        team_id, conn, RETURNING_PLAYER_EXTENDED_LOOKBACK, before_date=before_date
+    )
+    ext_window_weight = sum(_RECENCY_DECAY ** i for i in range(len(ext_game_ids)))
+
+    injected: dict[str, tuple[float, float]] = {}
+
+    for row in team_player_rows:
+        pid = row["player_id"]
+        overall = row["overall"]
+
+        # Already in the profile — has sufficient recent history
+        if pid in profile:
+            continue
+
+        # Skip if injured
+        name = player_id_to_name.get(pid, "")
+        if normalize_name(name) in injured_names:
+            continue
+
+        # Must meet the minimum rating threshold
+        if overall < RETURNING_PLAYER_THRESHOLD:
+            continue
+
+        # Must have few appearances in the recent window
+        recent_appearances = len(window_profiles.get(pid, []))
+        if recent_appearances > RETURNING_PLAYER_MAX_WINDOW_APPEARANCES:
+            continue
+
+        # Must have sufficient presence in the extended window
+        ext_shares = ext_profiles.get(pid, [])
+        ext_appearances = len(ext_shares)
+        if ext_appearances < RETURNING_PLAYER_MIN_EXTENDED_GAMES:
+            continue
+
+        # Compute recency-weighted availability-discounted share from extended window
+        w_sum = sum(w for s, w in ext_shares)
+        mean_ext_share = sum(w * s for s, w in ext_shares) / w_sum if w_sum > 0 else 0.0
+        availability = w_sum / ext_window_weight if ext_window_weight > 0 else 0.0
+        effective_ext_share = mean_ext_share * availability
+
+        # Inject at discounted share (0.70 = uncertainty discount for returning player)
+        injected_share = effective_ext_share * RETURNING_PLAYER_MULTIPLIER
+        injected_minutes = injected_share * 240
+        raw_shares = [s for s, w in ext_shares]
+        std_share = stdev(raw_shares) if len(raw_shares) > 1 else 0.03
+
+        injected[pid] = (injected_minutes, std_share * 240)
+        logger.info(
+            "Fix A: Injecting returning player %s (%s) | ovr=%.2f | "
+            "recent=%d/%d | extended=%d/%d | eff_share=%.1f%% → inject=%.1f%%",
+            name, pid, overall,
+            recent_appearances, n_window_games,
+            ext_appearances, RETURNING_PLAYER_EXTENDED_LOOKBACK,
+            effective_ext_share * 100, injected_share * 100,
+        )
+
+    if not injected:
+        return profile
+
+    # Merge injected players into profile; simulate_game normalizes via shares_from_minutes()
+    return MinutesProfile({**profile, **injected})
 
 
 # ---------------------------------------------------------------------------
@@ -524,10 +689,10 @@ def run_predictions(
 
             # Build lineup profiles from our DB possession history
             home_mins, home_coverage = _build_minutes_profile_from_db(
-                home_nba_id, conn, injured_names, player_id_to_name
+                home_nba_id, conn, injured_names, player_id_to_name, season=season
             )
             away_mins, away_coverage = _build_minutes_profile_from_db(
-                away_nba_id, conn, injured_names, player_id_to_name
+                away_nba_id, conn, injured_names, player_id_to_name, season=season
             )
 
             if not home_mins or not away_mins:

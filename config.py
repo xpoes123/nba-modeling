@@ -40,6 +40,16 @@ MINUTES_LOOKBACK_DAYS = 30        # days of BDL stats to pull for minutes distri
 MIN_GAMES_FOR_MINUTES = 5         # player needs at least this many games for minutes estimate
 DEFAULT_MINUTES = 20.0            # fallback if insufficient history
 
+# Returning player pre-seeding (Fix A — predictions.py only, not backtest)
+RETURNING_PLAYER_THRESHOLD = 2.0             # min overall_rating to qualify
+RETURNING_PLAYER_MAX_WINDOW_APPEARANCES = 2  # max appearances in 15-game window to trigger injection
+RETURNING_PLAYER_EXTENDED_LOOKBACK = 30      # games to look back for historical share
+RETURNING_PLAYER_MIN_EXTENDED_GAMES = 5      # min appearances in extended window to qualify
+RETURNING_PLAYER_MULTIPLIER = 0.70           # discount on historical share (uncertainty discount)
+
+# Long-term injury hard exclusion (Fix B — predictions.py, consistency update in backtest.py)
+LONG_TERM_INJURY_STREAK = 5                  # consecutive recent absences to trigger full exclusion
+
 # nba.com team ID → metadata mapping
 # bdl_id: balldontlie team ID
 NBA_TEAM_MAP: dict[str, dict] = {

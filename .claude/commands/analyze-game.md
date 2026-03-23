@@ -21,6 +21,13 @@ The subagent prompt should include:
 You are analyzing why our NBA prediction model predicted a specific game the way it did.
 Use PYTHONPATH=. uv run python to run DB queries against db/nba_ratings.db.
 
+IMPORTANT — Roster rules:
+- Read memory/rosters.md FIRST before any analysis. It contains known team discrepancies,
+  trades, and suspensions that are NOT in Claude's training data.
+- Never state a player's team from internal knowledge. Use the DB players.team_id and rosters.md.
+- If a player's team is unclear or not in rosters.md, note it as "unknown — ask David" in the analysis.
+- Do not guess at injuries, trades, or suspensions outside what the DB and rosters.md confirm.
+
 Game: {AWAY} @ {HOME} on {DATE}
 
 Steps:

@@ -253,6 +253,13 @@ rules strictly:
 - **Never rely on Claude's own NBA knowledge** to validate predictions, player ratings, or model
   outputs. Don't say "SGA should be top-5" or "the Lakers are a good home team" based on internal
   priors — these may be stale or wrong.
+- **`memory/rosters.md` is the source of truth for current team assignments, trades, and suspensions.**
+  Always consult it before making any claim about which team a player is on, whether a player is
+  active, or what a team's rotation looks like. If something looks wrong or is not in the file,
+  **ask David — do not guess or assume based on internal knowledge.** Claude's training data is
+  stale; trades and injuries from the 2025-26 season are not known to Claude.
+- **Never state a player's current team from internal knowledge.** Always check the DB
+  (`players.team_id`) and `memory/rosters.md`. If they conflict or the player is missing, ask David.
 - **Always backtest before concluding anything about model quality.** If a prediction looks
   surprising or a rating looks off, run `downstream/backtest.py` against recent dates rather than
   judging by intuition. Do NOT say "this looks reasonable" without a backtest number to back it up.
@@ -264,6 +271,7 @@ rules strictly:
   Report: MAE, correlation, directional accuracy, bias. Compare explicitly to the previous version.
 - **Ask David for sanity checks on NBA-specific questions — proactively, not as a last resort.**
   David has current-season NBA knowledge that Claude lacks. Ask early and often:
+  - Any time a player's team assignment is not confirmed in DB + rosters.md
   - Any time a player's rating seems surprising ("Is X playing starter minutes this year?")
   - Any time a team spread looks wrong vs. the market ("Does it make sense MIL is -6 here?")
   - Any time an edge might be driven by an injury or trade ("Did SAC get worse after Fox left?")

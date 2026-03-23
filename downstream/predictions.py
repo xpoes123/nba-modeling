@@ -18,7 +18,7 @@ import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from statistics import mean, stdev
+from statistics import stdev
 
 import pandas as pd
 
@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 # Number of recent team games to use for possession-share estimation
 _LINEUP_LOOKBACK_GAMES = 15
+_RECENCY_DECAY = 0.85  # per-game-slot exponential decay; slot 0 = most recent game
 
 
 # ---------------------------------------------------------------------------
@@ -148,13 +149,15 @@ def _get_team_possession_profiles(
     conn: sqlite3.Connection,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     before_date: str | None = None,
-) -> tuple[dict[str, list[float]], int]:
+) -> tuple[dict[str, list[tuple[float, float]]], int]:
     """Return (player_shares, n_window_games) for last n games.
 
-    player_shares: player_id → [possession_share_game1, possession_share_game2, ...]
+    player_shares: player_id → [(raw_share, game_weight), ...]
     n_window_games: actual number of games found (may be < n_games early in season).
 
     Possession share = fraction of the team's offensive possessions a player appeared in.
+    game_ids come back ORDER BY game_date DESC so index 0 = most recent game,
+    weighted by _RECENCY_DECAY ** slot_index.
 
     Args:
         before_date: if set (YYYY-MM-DD), only include games strictly before this date
@@ -187,6 +190,9 @@ def _get_team_possession_profiles(
     if not game_ids:
         return {}, 0
 
+    # slot 0 = most recent game (weight 1.0), slot 1 (0.85), …
+    game_weight = {gid: _RECENCY_DECAY ** i for i, gid in enumerate(game_ids)}
+
     placeholders = ",".join("?" * len(game_ids))
     poss_df = pd.read_sql(
         f"""
@@ -202,7 +208,7 @@ def _get_team_possession_profiles(
         return {}, len(game_ids)
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
-    player_shares: dict[str, list[float]] = {}
+    player_shares: dict[str, list[tuple[float, float]]] = {}
 
     for game_id, game_df in poss_df.groupby("game_id"):
         n_poss = len(game_df)
@@ -210,10 +216,11 @@ def _get_team_possession_profiles(
         for col in off_cols:
             for pid in game_df[col]:
                 counts[pid] = counts.get(pid, 0) + 1
+        w = game_weight[game_id]
         for pid, cnt in counts.items():
             # Normalize: each player appears in 5 of every possession's player slots
             share = cnt / (n_poss * 5)
-            player_shares.setdefault(pid, []).append(share)
+            player_shares.setdefault(pid, []).append((share, w))
 
     return player_shares, len(game_ids)
 
@@ -251,11 +258,15 @@ def _build_minutes_profile_from_db(
 
     result: MinutesProfile = MinutesProfile()
 
-    # Availability-discounted weight: mean_share × (games_appeared / games_in_window).
-    # A player who appeared in 9 of 15 games gets 60% of their per-game share. The
-    # remaining 40% is implicitly league average — someone else covered those possessions.
-    def _effective_share(shares: list[float]) -> float:
-        return mean(shares) * (len(shares) / n_window_games)
+    # Recency-weighted availability-discounted share.
+    # Weighted mean share × (player_weight_sum / total_window_weight).
+    # A player who appeared only in older games is discounted relative to one who
+    # appeared in recent games, even if the raw game counts are equal.
+    total_window_weight = sum(_RECENCY_DECAY ** i for i in range(n_window_games))
+
+    def _effective_share(pid_shares: list[tuple[float, float]]) -> float:
+        w_sum = sum(w for s, w in pid_shares)
+        return sum(w * s for s, w in pid_shares) / w_sum * (w_sum / total_window_weight) if w_sum > 0 else 0.0
 
     # Total weight across all qualified players (before injury filter)
     total_weight = sum(_effective_share(sh) for sh in profiles.values() if len(sh) >= min_games)
@@ -273,7 +284,9 @@ def _build_minutes_profile_from_db(
             continue
 
         available_weight += eff_share
-        std_share = stdev(shares) if len(shares) > 1 else 0.03
+        # Stdev computed on raw (unweighted) shares — measures lineup variance, not recency
+        raw_shares = [s for s, w in shares]
+        std_share = stdev(raw_shares) if len(raw_shares) > 1 else 0.03
 
         # Convert availability-discounted share → synthetic minutes
         result[pid] = (eff_share * 240, std_share * 240)
@@ -301,6 +314,19 @@ def _build_minutes_profile_from_db(
 # Formatting
 # ---------------------------------------------------------------------------
 
+def _confidence_tier(pred_spread: float) -> tuple[str, str]:
+    """Return (tier_label, accuracy_note) for a predicted spread magnitude."""
+    abs_pred = abs(pred_spread)
+    if abs_pred >= 10:
+        return "HIGH", "86% dir acc (backtest)"
+    elif abs_pred >= 7:
+        return "MODERATE", "82% dir acc (backtest)"
+    elif abs_pred >= 5:
+        return "FAIR", "79% dir acc (backtest)"
+    else:
+        return "LOW SIGNAL", "< 73% dir acc — use caution"
+
+
 def _abbrev(team_name: str) -> str:
     return next(
         (v["abbrev"] for v in NBA_TEAM_MAP.values() if v["name"] == team_name),
@@ -323,6 +349,7 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
 
     spread_edges: list[float] = []
     prob_edges: list[float] = []
+    tier_counts: dict[str, int] = {"HIGH": 0, "MODERATE": 0, "FAIR": 0, "LOW SIGNAL": 0}
 
     for p in predictions:
         home = p["home_team_name"]
@@ -376,6 +403,10 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
         print(f"  Coverage : {' | '.join(cov_parts)}")
         print(f"  Notes    : {', '.join(notes) if notes else 'none'}")
 
+        tier, acc_note = _confidence_tier(our_spread)
+        tier_counts[tier] += 1
+        print(f"  Confidence: {tier}  ({acc_note})")
+
         if spread_edge is not None:
             spread_edges.append(abs(spread_edge))
         if prob_edge is not None:
@@ -389,6 +420,16 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
         parts.append(f"Avg |win prob edge|: {sum(prob_edges)/len(prob_edges)*100:.1f}pp")
     if parts:
         print("  |  ".join(parts))
+
+    # Confidence tier summary across today's slate
+    tier_parts = [
+        f"{cnt} {label}"
+        for label, cnt in tier_counts.items()
+        if cnt > 0
+    ]
+    if tier_parts:
+        print(f"Confidence: {', '.join(tier_parts)}")
+
     print(f"{len(predictions)} predictions written to DB.\n")
 
 

@@ -18,7 +18,7 @@ import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
-from statistics import mean, stdev
+from statistics import stdev
 
 import pandas as pd
 from scipy.stats import pearsonr
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 _LINEUP_LOOKBACK_GAMES = 15
 _MIN_GAMES = 3
 _N_SIMS = 500  # fewer sims for speed — Monte Carlo variance is negligible anyway
+_RECENCY_DECAY = 0.85  # per-game-slot exponential decay; slot 0 = most recent game
 
 
 def _get_conn(db_path: str) -> sqlite3.Connection:
@@ -75,11 +76,15 @@ def _get_team_profiles(
     conn: sqlite3.Connection,
     before_date: str,
     n_games: int = _LINEUP_LOOKBACK_GAMES,
-) -> tuple[dict[str, list[float]], int]:
+) -> tuple[dict[str, list[tuple[float, float]]], int]:
     """Possession shares from the n games before before_date.
 
-    Returns (player_shares, n_window_games) where n_window_games is the actual
-    number of games found (may be less than n_games early in the season).
+    Returns (player_shares, n_window_games) where:
+    - player_shares: player_id → [(raw_share, game_weight), ...]
+      game_ids come back ORDER BY game_date DESC so index 0 = most recent game,
+      weighted by _RECENCY_DECAY ** slot_index.
+    - n_window_games: actual number of games found (may be less than n_games early
+      in the season).
     """
     rows = conn.execute(
         """
@@ -92,6 +97,9 @@ def _get_team_profiles(
     game_ids = [r["game_id"] for r in rows]
     if not game_ids:
         return {}, 0
+
+    # slot 0 = most recent game (weight 1.0), slot 1 (0.85), …
+    game_weight = {gid: _RECENCY_DECAY ** i for i, gid in enumerate(game_ids)}
 
     placeholders = ",".join("?" * len(game_ids))
     poss_df = pd.read_sql(
@@ -107,15 +115,16 @@ def _get_team_profiles(
         return {}, len(game_ids)
 
     off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
-    player_shares: dict[str, list[float]] = {}
+    player_shares: dict[str, list[tuple[float, float]]] = {}
     for gid, gdf in poss_df.groupby("game_id"):
         n_poss = len(gdf)
         counts: dict[str, int] = {}
         for col in off_cols:
             for pid in gdf[col]:
                 counts[pid] = counts.get(pid, 0) + 1
+        w = game_weight[gid]
         for pid, cnt in counts.items():
-            player_shares.setdefault(pid, []).append(cnt / (n_poss * 5))
+            player_shares.setdefault(pid, []).append((cnt / (n_poss * 5), w))
     return player_shares, len(game_ids)
 
 
@@ -144,15 +153,23 @@ def _build_minutes_profile(
     total_weight = 0.0
     available_weight = 0.0
 
+    # Total weight across all slots in the window (denominator for weighted availability)
+    total_window_weight = sum(_RECENCY_DECAY ** i for i in range(n_window_games))
+
     for pid, shares in profiles.items():
         if len(shares) < _MIN_GAMES:
             continue
-        # Availability discount: weight by fraction of games the player appeared in
-        availability = len(shares) / n_window_games
-        ms = mean(shares) * availability
+        # Weighted mean share (recency-weighted)
+        w_sum = sum(w for s, w in shares)
+        mean_share = sum(w * s for s, w in shares) / w_sum
+        # Weighted availability: fraction of total window weight this player covered
+        availability = w_sum / total_window_weight
+        ms = mean_share * availability
         total_weight += ms
         available_weight += ms
-        sd = stdev(shares) if len(shares) > 1 else 0.03
+        # Stdev computed on raw (unweighted) shares — measures lineup variance, not recency
+        raw_shares = [s for s, w in shares]
+        sd = stdev(raw_shares) if len(raw_shares) > 1 else 0.03
         result[pid] = (ms * 240, sd * 240)
 
     coverage = available_weight / total_weight if total_weight > 0 else 1.0
@@ -343,6 +360,38 @@ def run_backtest(
         print(f"\nCoverage breakdown (< 90% min coverage = injury games):")
         print(f"  Low coverage  ({len(low_cov):>3} games): MAE = {mae_low:.2f} pts")
         print(f"  High coverage ({len(high_cov):>3} games): MAE = {mae_high:.2f} pts")
+
+    # Confidence breakdown by predicted spread magnitude
+    def _conf_bucket(subset: list[dict], label: str, threshold_str: str) -> None:
+        if not subset:
+            return
+        b_mae = sum(r["abs_error"] for r in subset) / len(subset)
+        b_dir = sum(
+            1 for r in subset if (r["predicted_spread"] > 0) == (r["actual_margin"] > 0)
+        ) / len(subset)
+        print(
+            f"  {threshold_str:<18} ({label:<8}): {len(subset):>5} games"
+            f"  MAE={b_mae:>5.2f}  Dir={b_dir:.1%}"
+        )
+
+    print(f"\nConfidence breakdown (|pred_spread| threshold):")
+    _conf_bucket(
+        [r for r in results if abs(r["predicted_spread"]) >= 12],
+        "HIGH", "|pred| >= 12",
+    )
+    _conf_bucket(
+        [r for r in results if abs(r["predicted_spread"]) >= 10],
+        "HIGH", "|pred| >= 10",
+    )
+    _conf_bucket(
+        [r for r in results if abs(r["predicted_spread"]) >= 7],
+        "MODERATE", "|pred| >=  7",
+    )
+    _conf_bucket(
+        [r for r in results if abs(r["predicted_spread"]) >= 5],
+        "FAIR", "|pred| >=  5",
+    )
+    _conf_bucket(results, "LOW incl", "All games",)
 
     return results
 

@@ -251,6 +251,14 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 ## Improvement Ideas (Prioritized)
 
+0. ~~**Confidence threshold gate**~~ — **DONE (2026-03-22)**. `_confidence_tier()` helper added to predictions.py; per-game tier label printed in `_print_report()`; confidence breakdown table added to `backtest.py` summary output. Thresholds: HIGH≥10 (86%), MODERATE≥7 (82%), FAIR≥5 (79%), LOW SIGNAL<5 (<73%).
+
+0a. ~~**Fix calibration oracle vs. lookback mismatch**~~ — **DONE (2026-03-22)**. `_build_team_ratings_for_game()` in calibration.py now uses the same 15-game recency-weighted lookback as backtest/predictions instead of oracle game possessions. Alpha 6.14→6.10 (minimal), B2B coefficients shifted more (home -2.40→-3.05, away +1.28→+2.29). Full-season backtest: MAE 10.81→10.76, corr 0.512→0.520, dir 70.1%→69.6%. Essentially a wash on accuracy but conceptually correct now.
+
+0b. ~~**Recency weighting in lineup lookback**~~ — **DONE (2026-03-22)**. `_RECENCY_DECAY=0.85` added to backtest.py, predictions.py, and calibration.py. Lookback functions now weight most-recent game slot=1.0, each older slot ×0.85. Addresses December-January accuracy dip from trade-deadline roster flux.
+
+0c. **HCA recalibration** — current +2.01 (v5) causes ~+4pp home bias (we predict home wins 58.4% vs actual 54.4%). Could reduce to +1.5-1.7 pts. OR wait for more live prediction data to track empirically. Not high-priority since the bias is small and EB shrinkage is already doing the right thing.
+
 1. ~~**Ridge regularization / EB shrinkage on team HCA**~~ — **RESOLVED + IMPLEMENTED (2026-03-22)**.
    EB logic from `test_hca_approach3_eb.py` merged into production `downstream/calibration.py`.
    Re-running `calibration.py` now natively produces EB-shrunk coefficients. Old OLS-with-30-dummies
@@ -344,17 +352,128 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 ---
 
+## Backtest Deep-Dive Diagnostics (2026-03-22)
+
+**Run:** full season backtest (Oct 2024 – Mar 21 2026, 1002 games, v4 calibration)
+
+### Confidence Threshold — BIGGEST ACTIONABLE FINDING
+
+The model's directional accuracy depends heavily on how confident its prediction is:
+
+| Threshold    | N games | Dir Acc | Coverage |
+|--------------|---------|---------|----------|
+| |pred| >= 0  | 1002    | 69.9%   | 100%     |
+| |pred| >= 3  |  722    | 73.7%   |  72%     |
+| |pred| >= 5  |  512    | 78.7%   |  51%     |
+| |pred| >= 7  |  379    | 82.3%   |  38%     |
+| |pred| >= 10 |  215    | 86.5%   |  22%     |
+| |pred| >= 12 |  135    | 89.6%   |  14%     |
+
+**Implication:** Below |pred| < 5 pts (49% of games), the model has ~61-62% directional
+accuracy — barely above chance. **Only predictions with |pred| >= 7-10 pts carry real signal.**
+This should gate which predictions are flagged as actionable.
+
+### Error Distribution (fat tails)
+
+| Metric                   | Value    |
+|--------------------------|----------|
+| Median abs error         | 8.80 pts |
+| MAE                      | 10.81    |
+| 75th percentile          | 15.45    |
+| 90th percentile          | 22.47    |
+| 95th percentile          | 27.00    |
+| Max abs error            | 50.36    |
+| Top 5% games → % sq err  | 29.7%    |
+| Top 10% games → % sq err | 45.7%    |
+
+**Fat tail problem:** The top 10% of games (100 games) contribute 46% of total squared error.
+The model is decent on 89% of games (MAE ~9 pts) but catastrophic on blowouts.
+
+### Blowout Games (|actual| > 25 pts)
+
+114 games (11.4%) are blowouts. MAE on blowouts: **24.86 pts** vs **9.00 pts** on normal games.
+Despite terrible magnitude accuracy, direction accuracy on blowouts is **92.1%** — the model
+knows who's better even when it can't predict by how much. Average |pred| on 30+ pt blowouts
+is only 8.6 pts — severe compression from ridge regression.
+
+### Spread Compression
+
+- Pred range: [-18.2, +21.6], std=7.59
+- Actual range: [-55, +54], std=15.97
+- Compression ratio: **0.475** — predictions are 47.5% as variable as reality
+- Regression slope (actual ~ pred): **1.077**
+  → alpha=6.14 is ~7.7% too small for lookback-estimated lineups
+  → Adjusted alpha estimate: **~6.61**
+
+Root cause: calibration trains alpha on actual game possession shares (oracle knowledge of who
+played); backtest+predictions use 15-game lookback estimates. Oracle lineups have different
+signal than estimated lineups. Alpha fit on oracle data is slightly undersized for the estimation case.
+
+### Home Team Bias
+
+- We predict home wins: **58.4%** of games
+- Home teams actually win: **54.4%** of games
+- Overpredict home by **+4.0pp** — HCA of +2.09 pts is slightly inflated
+
+### Monthly Breakdown (look-ahead bias / seasonal effects)
+
+| Month   | Games | MAE   | Corr  | Dir%  |
+|---------|-------|-------|-------|-------|
+| Oct     |   32  | 11.00 | 0.403 | 65.6% |
+| Nov     |  218  |  9.70 | 0.596 | 72.5% |
+| **Dec** |**194**|**11.23**|**0.381**|**67.0%**|
+| **Jan** |**228**|**11.38**|**0.425**|**64.9%**|
+| Feb     |  166  | 11.50 | 0.583 | 68.7% |
+| Mar     |  164  | 10.24 | 0.598 | 79.3% |
+
+December-January are systematically the worst months despite being mid-season with ample data.
+Likely cause: trade deadline flux (Jan-Feb trades; some start in December). The 15-game lookback
+slowly absorbs trades but can take 15+ games to fully flush pre-trade data. March being best (79.3%)
+is partly settled rotations, partly the RAPM ratings being freshest relative to that period.
+
+### B2B Breakdown
+
+| Type    | N    | MAE   | Dir%  |
+|---------|------|-------|-------|
+| B2B     |  309 | 11.83 | 68.0% |
+| Non-B2B |  693 | 10.35 | 70.9% |
+
+B2B games are harder (expected) but the gap is modest.
+
+---
+
 ## Backtest Results
 
 ### Full Season 2025-26 (1002 games) — cumulative improvement history
 
-| Version       | Change                              | MAE    | Corr  | Dir acc      |
-|---------------|-------------------------------------|--------|-------|--------------|
-| v2 OLS        | baseline                            | 11.06  | 0.490 | 67.9% (680)  |
-| v3 EB         | EB calibration + avail. discount    | 10.84  | 0.506 | 68.6% (687)  |
-| **v4 fixed**  | **defense sign fix + recalibrate**  | 10.81  | 0.512 | **70.1% (702)** |
+| Version       | Change                                          | MAE    | Corr  | Dir acc         |
+|---------------|-------------------------------------------------|--------|-------|-----------------|
+| v2 OLS        | baseline                                        | 11.06  | 0.490 | 67.9% (680)     |
+| v3 EB         | EB calibration + avail. discount                | 10.84  | 0.506 | 68.6% (687)     |
+| v4 fixed      | defense sign fix + recalibrate                  | 10.81  | 0.512 | 70.1% (702)     |
+| **v5 lookback** | **recency weighting + calibration refit + confidence gate** | **10.76** | **0.520** | **69.6% (697)** |
 
 Skipped: 48 games (insufficient early-season lineup history).
+
+**v5 changes (2026-03-22):**
+1. Exponential recency weighting (`_RECENCY_DECAY=0.85`) in all lineup lookback functions — most recent game slot=1.0, each older slot ×0.85. Improves Dec-Jan accuracy (trade deadline flux).
+2. Calibration refit on lookback lineups (not oracle game possessions) — eliminates train/test distribution mismatch. Alpha 6.14→6.10 (minimal change), but B2B coefficients shifted substantially (see below) because lookback doesn't see who actually sat in B2B games.
+3. Confidence tier gate in both backtest output and prediction report (|pred|>=10=HIGH/86%, >=7=MODERATE/82%, >=5=FAIR/79%, <5=LOW SIGNAL/<73%).
+
+**v5 calibration coefficients:**
+
+| Coefficient     | v5 (current)   | v4 (superseded) |
+|-----------------|----------------|-----------------|
+| alpha           | 6.097          | 6.14            |
+| beta_hca        | +2.01 pts      | +2.09 pts       |
+| beta_b2b_home   | −3.05 pts      | −2.40 pts       |
+| beta_b2b_away   | +2.29 pts      | +1.28 pts       |
+| sigma_residual  | 13.34 pts      | 13.01 pts       |
+| sigma2_between  | 7.703          | 4.997           |
+| avg shrinkage   | 0.537          | 0.618           |
+| val_corr        | 0.562          | 0.586           |
+
+Note: B2B coefficients increased substantially because lookback lineups don't capture who sat in B2B games — the B2B dummy must now carry the full fatigue signal explicitly. Val_corr dropped slightly (0.586→0.562) because validation now uses the same noisy estimation approach as training instead of oracle data.
 
 **v4 key insight:** The sign bug caused calibration α to inflate (8.46) to partially offset the
 backwards defense contribution. After the fix, α dropped to 6.14 and σ²_between became detectable

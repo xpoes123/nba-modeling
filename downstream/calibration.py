@@ -41,6 +41,10 @@ from downstream.team_ratings import PlayerRating, compute_raw_margin, compute_te
 # Canonical sorted team ID list — order must be stable across train/val/predict.
 _TEAM_IDS: list[str] = sorted(NBA_TEAM_MAP.keys())
 
+_LINEUP_LOOKBACK_GAMES = 15
+_MIN_GAMES = 3
+_RECENCY_DECAY = 0.85
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -96,9 +100,9 @@ def _load_league_avg(conn: sqlite3.Connection, season: str) -> tuple[float, floa
 
 
 def _build_team_ratings_for_game(
-    game_id: str,
     home_team_id: str,
     away_team_id: str,
+    game_date: str,
     conn: sqlite3.Connection,
     player_ratings: dict[str, PlayerRating],
     league_avg_ppp: float,
@@ -106,56 +110,83 @@ def _build_team_ratings_for_game(
 ) -> float | None:
     """Compute raw predicted home margin for a historical game.
 
-    Uses the players who actually appeared in the game (from possessions table)
-    and their actual possession shares.
+    Uses the same 15-game lookback estimation with recency weighting that the
+    backtest and live prediction pipeline use — NOT oracle lineup data from the
+    game itself. This eliminates the train/test mismatch where calibration fits
+    alpha on cleaner oracle data but applies it to noisier estimated data.
     """
-    poss_df = pd.read_sql(
-        """
-        SELECT offense_team_id,
-               off_player_1, off_player_2, off_player_3, off_player_4, off_player_5
-        FROM possessions
-        WHERE game_id = ?
-        """,
-        conn,
-        params=(game_id,),
-    )
 
-    if poss_df.empty:
-        return None
+    def _get_team_shares(team_id: str) -> dict[str, float] | None:
+        """Return recency-weighted, availability-discounted possession shares."""
+        rows = conn.execute(
+            """
+            SELECT game_id FROM games
+            WHERE (home_team_id = ? OR away_team_id = ?) AND game_date < ?
+            ORDER BY game_date DESC LIMIT ?
+            """,
+            (team_id, team_id, game_date, _LINEUP_LOOKBACK_GAMES),
+        ).fetchall()
+        game_ids = [r["game_id"] for r in rows]
+        if not game_ids:
+            return None
 
-    # Count possessions per player per team (offensive possessions only — that's
-    # when they're contributing their offensive rating)
-    off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
+        n_window_games = len(game_ids)
+        # slot 0 = most recent game (weight 1.0), slot 1 = 0.85, …
+        game_weight = {gid: _RECENCY_DECAY ** i for i, gid in enumerate(game_ids)}
+        total_window_weight = sum(_RECENCY_DECAY ** i for i in range(n_window_games))
 
-    home_poss = poss_df[poss_df["offense_team_id"] == home_team_id]
-    away_poss = poss_df[poss_df["offense_team_id"] == away_team_id]
+        placeholders = ",".join("?" * len(game_ids))
+        poss_df = pd.read_sql(
+            f"""
+            SELECT game_id, off_player_1, off_player_2, off_player_3, off_player_4, off_player_5
+            FROM possessions
+            WHERE offense_team_id = ? AND game_id IN ({placeholders})
+            """,
+            conn,
+            params=[team_id] + game_ids,
+        )
+        if poss_df.empty:
+            return None
 
-    def _possession_shares(team_poss: pd.DataFrame) -> dict[str, float]:
-        counts: dict[str, int] = {}
-        n = len(team_poss)
-        if n == 0:
-            return {}
-        for col in off_cols:
-            for pid in team_poss[col]:
-                counts[pid] = counts.get(pid, 0) + 1
-        # Each player's share = appearances / (n_possessions * 5), then normalize
-        return {pid: cnt / (n * 5) for pid, cnt in counts.items()}
+        off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
 
-    home_shares = _possession_shares(home_poss)
-    away_shares = _possession_shares(away_poss)
+        # Build per-player list of (raw_share, game_weight) entries
+        player_share_list: dict[str, list[tuple[float, float]]] = {}
+        for gid, gdf in poss_df.groupby("game_id"):
+            n_poss = len(gdf)
+            counts: dict[str, int] = {}
+            for col in off_cols:
+                for pid in gdf[col]:
+                    counts[pid] = counts.get(pid, 0) + 1
+            w = game_weight[gid]
+            for pid, cnt in counts.items():
+                player_share_list.setdefault(pid, []).append((cnt / (n_poss * 5), w))
+
+        # Compute recency-weighted mean share with availability discounting
+        shares: dict[str, float] = {}
+        for pid, entries in player_share_list.items():
+            if len(entries) < _MIN_GAMES:
+                continue
+            w_sum = sum(w for _, w in entries)
+            mean_share = sum(w * s for s, w in entries) / w_sum
+            # Availability: fraction of total window weight this player covered
+            availability = w_sum / total_window_weight
+            shares[pid] = mean_share * availability
+
+        if not shares:
+            return None
+        return shares
+
+    home_shares = _get_team_shares(home_team_id)
+    away_shares = _get_team_shares(away_team_id)
 
     if not home_shares or not away_shares:
         return None
 
-    # Use actual possession count as the pace (rather than estimated)
-    actual_pace = (len(home_poss) + len(away_poss)) / 2
-
     home_team = compute_team_ratings(player_ratings, home_shares)
     away_team = compute_team_ratings(player_ratings, away_shares)
 
-    home_ppp = league_avg_ppp + (home_team["offense"] + away_team["defense"]) / 100
-    away_ppp = league_avg_ppp + (away_team["offense"] + home_team["defense"]) / 100
-    return (home_ppp - away_ppp) * actual_pace
+    return compute_raw_margin(home_team, away_team, league_avg_ppp, league_avg_pace)
 
 
 def _detect_b2b(games_df: pd.DataFrame) -> pd.DataFrame:
@@ -213,7 +244,7 @@ def run_calibration(
 
         for i, row in games_df.iterrows():
             raw = _build_team_ratings_for_game(
-                row["game_id"], row["home_team_id"], row["away_team_id"],
+                row["home_team_id"], row["away_team_id"], row["game_date"],
                 conn, player_ratings, league_avg_ppp, league_avg_pace,
             )
             if raw is not None:

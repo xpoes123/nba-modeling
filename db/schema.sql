@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS predictions (
     n_simulations       INTEGER,
     home_coverage       REAL,                        -- fraction of normal home minutes available (0-1)
     away_coverage       REAL,                        -- fraction of normal away minutes available (0-1)
+    actual_home_score   INTEGER,                     -- filled in after game finishes
+    actual_away_score   INTEGER,                     -- filled in after game finishes
+    actual_margin       REAL,                        -- home_score - away_score (positive = home won)
+    outcome_tracked_at  TEXT,                        -- when track_outcomes.py last updated this row
     created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(game_date, home_team_name, away_team_name)
 );

@@ -15,11 +15,15 @@ set DATESTAMP=%DT:~0,4%-%DT:~4,2%-%DT:~6,2%
 
 set LOG_FILE=%LOG_DIR%\predictions_%DATESTAMP%.log
 
-echo Running NBA predictions for %1 >> "%LOG_FILE%" 2>&1
+echo Running outcome tracking + NBA predictions for %1 >> "%LOG_FILE%" 2>&1
 echo Log: %LOG_FILE%
 
 set PYTHONPATH=%PROJECT_ROOT%
 
+REM Resolve yesterday's predictions against actual scores first
+uv run --project "%PROJECT_ROOT%" python "%PROJECT_ROOT%\downstream\track_outcomes.py" >> "%LOG_FILE%" 2>&1
+
+REM Generate predictions for the next slate
 if "%1"=="" (
     uv run --project "%PROJECT_ROOT%" python "%PROJECT_ROOT%\downstream\predictions.py" >> "%LOG_FILE%" 2>&1
 ) else (

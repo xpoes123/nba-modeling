@@ -124,16 +124,25 @@
 - current_ratings: phase='elo' (P6 composite — RAPM base + Elo delta)
 - rapm_ratings: has both rapm_full (historical) and rapm_rolling (latest) rows
 - elo_ratings: 22,572 rows (per-player-per-game cumulative deltas)
-- predictions: 6 rows (2026-03-22 slate, first predictions run)
+- predictions: rows for 2026-03-21 slate (9 resolved with actual outcomes) + 2026-03-22 slate
 
 ## Next Steps
 1. **Coverage-ratio → calibration penalty** — add `β_coverage * (2 - home_cov - away_cov)` term
    to calibration to further shrink predictions for depleted teams. Availability discount helps
    but ridge compression limits injury-game accuracy; a coverage penalty is more direct.
-2. **Outcome tracking pipeline** — compare predictions in DB to actual final scores.
-3. **Closing line value (CLV) tracking** — compare model predictions to closing market lines
-   (not just actual scores). Closing line is better benchmark for model quality assessment.
-4. See `memory/model-analysis.md` for full improvement backlog.
+2. **CLV tracking** — will eventually come via a separate repo that David owns; connect that repo
+   to this one when ready. Do not build CLV infrastructure here for now.
+3. See `memory/model-analysis.md` for full improvement backlog.
+
+## Completed This Session (2026-03-22, second pass)
+- **Outcome tracking pipeline** (2026-03-22): `downstream/track_outcomes.py` resolves predictions
+  against actual scores in the `games` table after nightly ingestion. 4 new columns added to
+  `predictions` table: `actual_home_score`, `actual_away_score`, `actual_margin`,
+  `outcome_tracked_at`. `db/init_db.py` has idempotent ALTER TABLE migration. `run_predictions.bat`
+  now runs `track_outcomes.py` before generating new predictions. 74/74 tests pass.
+  First resolved results (2026-03-21 slate, 9 games): MAE=6.25, Corr=0.794, Dir=7/9 (77.8%).
+  Market baseline on same 9 games: 9/9 (100%) — large gap on injury games (PHI@UTA, LAL@ORL).
+- **CLV tracking**: deferred — David has a separate CLV repo; will connect when ready.
 
 ## Completed This Session (2026-03-22)
 - **Defense sign bug fix** (2026-03-22, second session): Fixed `compute_raw_margin` in

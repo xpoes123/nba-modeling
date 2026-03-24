@@ -126,21 +126,57 @@
 - elo_ratings: 22,572 rows (per-player-per-game cumulative deltas)
 - predictions: rows for 2026-03-21 slate (9 resolved with actual outcomes) + 2026-03-22 slate
 
+## Completed This Session (2026-03-24) — Skill Updates
+- **`/analyze-game` redesigned**: now conversational — subagent gathers raw data, main context
+  walks through findings with David section by section (lineup gaps, margin math, market edge,
+  model bias). Asks David to confirm any NBA assumption, sanity check, or known model bias.
+  Writes full md file (including David's inputs) at the end. File ends with
+  `<!-- POST-MORTEM APPENDED BELOW -->` marker.
+- **`/post-mortem DATE` created**: fully autonomous post-game skill. Checks all predicted games
+  on a date, requires analyze-game files to exist first (stops and instructs David to run
+  `/analyze-game` for any missing). Pulls actual outcomes + box scores via `BoxScoreTraditionalV3`.
+  Appends a post-mortem section to each game's analyze-game file and a day summary to
+  `memory/model-analysis.md`. No user interaction.
+- Files: `.claude/commands/analyze-game.md` (updated), `.claude/commands/post-mortem.md` (new)
+
 ## Next Steps
-1. **Injury modeling improvements** — full spec at `memory/injury-modeling-spec.md`.
-   - **Fix A (do first):** Returning player pre-seeding — inject players who are NOT on the injury
-     list but have < 3 appearances in the 15-game window and strong ratings (overall >= 2.0).
-     Look back 30 games for historical share, inject at 70% of that. Handles Steph Curry cases.
-   - **Fix B (do second):** Hard exclusion for long-term injured — if a player is ESPN Out AND
-     missed the last 5+ consecutive games, zero out their profile before redistribution. Handles
-     Maxey/Giannis window contamination.
-   - Start with `downstream/predictions.py` (Fix A only); `backtest.py` needs Fix B too.
-   - After implementing, run full-season backtest comparison (before/after).
+1. **Injury modeling backtest comparison** — Fix A + Fix B deployed (2026-03-23). Need to run
+   full-season backtest to measure before/after impact:
+   ```bash
+   PYTHONPATH=. uv run python downstream/backtest.py --start 2026-01-01 --end 2026-03-23
+   ```
+   Compare MAE/corr/dir_acc to v5 baseline (MAE=10.76, dir=69.6%).
+2. **Fix A extended lookback gap**: `RETURNING_PLAYER_EXTENDED_LOOKBACK=30` games is insufficient
+   for players out 3+ months (e.g. Steph Curry, last played Dec 12-14 = ~70 GSW games ago).
+   The 30-game window doesn't reach him. Options:
+   - Increase extended lookback to 60-70 games (catches most long-term cases)
+   - Add a separate "super-long-term" path for players with 0 appearances in 30 games but
+     played earlier in the season (requires a minimum season-games-played threshold)
+   - Ask David before changing — need to confirm which players are actually returning "soon"
 2. **CLV tracking** — deferred to David's separate repo. Do not build here.
 3. **Tanking penalty** — Kings, Jazz, Wizards, Nets are tanking (2025-26). Spec in
    `memory/model-analysis.md` item #10. Requires knowing which teams own their draft picks;
    David confirms this at the start of each season.
 4. See `memory/model-analysis.md` for full improvement backlog.
+
+## Completed This Session (2026-03-23) — Injury Modeling Fix A + Fix B
+- **Fix A (returning player pre-seeding)**: `_inject_returning_players()` in predictions.py.
+  Injects players not on injury list, ≤2 recent appearances, overall≥2.0, ≥5 appearances
+  in 30-game extended window, at 70% of their historical share. Only fires when `season`
+  is passed (not in backtest mode). Constants in config.py.
+- **Fix B (long-term injury hard exclusion)**: Before building MinutesProfile, removes any
+  ESPN-Out player with ≥5 consecutive recent absences from `profiles` entirely, preventing
+  their earlier appearances from inflating coverage_ratio. `_consecutive_recent_absences()`
+  is a pure testable helper.
+- **Signature update**: `_get_team_possession_profiles()` now returns `(player_shares,
+  game_ids, player_game_ids)`; `_get_team_profiles()` in backtest.py returns `(player_shares,
+  game_ids)`. All callers updated.
+- **12 new tests**: 86/86 passing. Pure unit tests for `_consecutive_recent_absences`;
+  integration tests with in-memory SQLite for Fix A/B behaviors.
+- **Today's slate (2026-03-23)**: Fix A fired only for Vince Williams Jr. (trivial 0.3%
+  injection). Steph Curry NOT injected — last played ~70 GSW games ago, outside 30-game
+  extended window. GSW@DAL still shows DAL -1.9 vs GSW -2.5 market (LOW SIGNAL).
+- **Pushed**: commit 7c82db4
 
 ## Completed This Session (2026-03-23) — Predictions + Injury Modeling Spec
 - **Ran today's slate (2026-03-23)**: 10 games predicted. Ran 3 parallel subagents to trace

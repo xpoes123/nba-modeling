@@ -43,8 +43,15 @@ notebooks/.ipynb_checkpoints/
 .DS_Store
 Thumbs.db
 
-# Nightly job logs
+# Logs
 logs/*.log
+*.log
+
+# Archives / data dumps
+*.zip
+
+# Experimental calibration artifacts
+downstream/calibration_coeffs_approach*.json
 
 # Claude Code local settings (permissions are machine-specific)
 .claude/settings.local.json

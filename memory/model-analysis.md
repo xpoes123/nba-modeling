@@ -153,6 +153,27 @@ reasonable; v3 (EB) at 0.548 is the best we've achieved in calibration.
 
 ## Known Model Gaps
 
+### 7. Blowout magnitude compression (diagnosed 2026-03-23)
+
+On large talent mismatches, the model's calibration α=6.097 compresses raw margin predictions
+to roughly half the actual blowout severity. Three games on 2026-03-23: ATL +39 (pred -8.5),
+POR +35 (pred -16.1), LAC +33 (pred -8.6). All direction-correct; all 24–30 pts above spread.
+
+**Root cause:** Ridge-compressed RAPM ratings + linear calibration produces a roughly Gaussian
+prediction centered on the "expected" margin. Actual NBA games have fat tails — when a weak team
+plays a strong home team and the weak team is also missing key players, outcomes can cascade.
+The model's σ=13.3 pts residual correctly represents average games but the tails are fatter.
+
+**Practical implication:** When our model says `ATL -8`, the true distribution has a longer right
+tail than our Gaussian assumption implies. We're systematically underconfident about blowouts.
+On games where model predicts 10+ pts home favorite AND market agrees (edge < 3 pts), the actual
+margin is often 20+. Do not fade these games on "model shows tighter spread than market."
+
+**Market alignment check:** On MEM@ATL, market had -14 (vs our -8.5). Market was closer but also
+badly wrong (-14 vs +39). ATL 146 pts is a true regime-change game beyond any model's distribution.
+The 3 blowouts today were distributed: ATL (model+market both badly off), POR (model slightly
+above market), LAC (market well above model). Market had better calibration on the latter two.
+
 ### 6. RAPM compression limits injury-game accuracy (diagnosed 2026-03-22)
 
 When multiple starters are out (e.g., GSW missing Porzingis/Moody/GPII/Horford), the model
@@ -314,6 +335,27 @@ many injuries, our model's possession-share redistribution may be inaccurate.
 
 3. **Position-adjusted replacement** — when a star is out, give their possessions to
    their typical backup (from historical substitution patterns), not just normalize evenly.
+
+11. **Fix A extension for 4+ week absences (confirmed need 2026-03-23)** — The current
+    `RETURNING_PLAYER_EXTENDED_LOOKBACK=30` only reaches ~3-week absences. Two HIGH-impact
+    misses on 2026-03-23 were caused by returning stars with 4-6 week absences not being
+    injected: Siakam (5/15 games, IND upset ORL), Moody + Porzingis (both sparse, GSW beat DAL).
+    **Options:**
+    - Increase `RETURNING_PLAYER_EXTENDED_LOOKBACK` to 45 or 60 games — but risks injecting
+      stale pre-injury ratings for players who've changed role or team.
+    - Add a `returning_stars_override` list David can manually provide pre-game (quick fix).
+    - Check `nba_api.PlayerGameLog` for each ESPN-Active player to see if they're returning
+      from a documented absence, then inject from their last N games before the absence.
+    **Constraint:** Confirm lookback window change with David. Do not increase autonomously.
+
+12. **Recency artifact filtering for 1-game sparse players (confirmed 2026-03-23)** —
+    Lauri Markkanen appeared at 13.7% weighted share (1 game, first game back from long injury)
+    but DNP'd the next game. Kennedy Chandler appeared at 15.5% (1 game) and DID play. The
+    problem: when a player's first game back is recent (slot 0), they get weight=1.0 even if
+    it's their only game in 15. This inflates UTA's apparent quality by ~8 pts of predicted margin.
+    **Fix idea:** Cap single-game appearances at a lower weight (e.g., 0.3) unless they also
+    appeared in 2+ games in the extended lookback window. This reduces noise from one-off
+    returns without removing genuinely returning players.
 
 10. **Tanking penalty** — teams with lottery incentives play to lose in the final ~20 games of the
     season. RAPM ratings don't capture this — a tanking team's starters may be healthy but
@@ -578,3 +620,18 @@ Notable misfires: MIL@UTA (−34.6), TOR@CHI (+28.4), MIA@CHA (−27.6), PHI@DEN
 — large blowouts, inherently unpredictable.
 
 **Run command:** `PYTHONPATH=. uv run python downstream/backtest.py --start YYYY-MM-DD --end YYYY-MM-DD`
+
+---
+
+### Post-Mortem: 2026-03-23
+- **Games:** 10 predicted | **Directional:** 6-4 (60.0%) | **HIGH ATS:** 2-1 (67%) | **MODERATE ATS:** 2-1 (67%) | **MAE (all):** 15.89 pts | **MAE (HIGH only):** 14.48 pts
+- **Biggest miss:** MEM@ATL — predicted ATL -8.5, actual ATL +39 (error -30.54) — ATL exploded for 146 pts
+- **Biggest hit:** LAL@DET — predicted LAL -0.1, actual DET +3 (error -3.12) — near-perfect pick'em call
+- **Directional wins:** SAS@MIA, OKC@PHI, MEM@ATL, TOR@UTA, BKN@POR, MIL@LAC
+- **Directional losses:** LAL@DET, IND@ORL, HOU@CHI, GSW@DAL
+- **Key pattern — blowout magnitude compression**: Three games (ATL +39, POR +35, LAC +33) ended 24-30 pts above our spread. All three were direction-correct. The model's calibration α=6.097 compresses raw margins significantly; large talent mismatches produce blowouts the model consistently underestimates. Market was closer but also badly wrong on ATL (+39 vs mkt -14).
+- **Key pattern — returning players**: Two direction misses linked to Fix A failure. IND@ORL: Siakam (37 pts) only 5/15 games in window. GSW@DAL: Moody + Porzingis both sparse, combined for 45 pts. Pre-game flagged both as risks; missed anyway.
+- **Key pattern — star individual lines overcome by depth**: HOU@CHI — Durant 40 + Sengun 33/13/10, still lost. RAPM stars producing individually ≠ team win when depth is a mismatch.
+- **Giannis/injury intelligence gap**: MIL@LAC: Giannis sat (pre-game correctly flagged as risk). LAC@MIL: market had -13, we had -8.6. Market -4.38 gap was correct signal — market knew Giannis out. Similar for PHI@OKC: market knew Maxey+Embiid out.
+- **Recency artifact confirmed**: TOR@UTA — Markkanen appeared at 13.7% with 1 game but DNP'd. Error inflated by ~+8 pts. Kennedy Chandler (1/15) was real this time (29 min). Sparse = noise for players who happened to play 1 game; need better sparse filtering.
+- **Full analyses:** [LAL@DET](game-analyses/2026-03-23-LAL-DET.md) | [IND@ORL](game-analyses/2026-03-23-IND-ORL.md) | [SAS@MIA](game-analyses/2026-03-23-SAS-MIA.md) | [OKC@PHI](game-analyses/2026-03-23-OKC-PHI.md) | [MEM@ATL](game-analyses/2026-03-23-MEM-ATL.md) | [HOU@CHI](game-analyses/2026-03-23-HOU-CHI.md) | [TOR@UTA](game-analyses/2026-03-23-TOR-UTA.md) | [GSW@DAL](game-analyses/2026-03-23-GSW-DAL.md) | [BKN@POR](game-analyses/2026-03-23-BKN-POR.md) | [MIL@LAC](game-analyses/2026-03-23-MIL-LAC.md)

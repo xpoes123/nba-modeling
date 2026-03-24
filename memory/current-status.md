@@ -126,6 +126,14 @@
 - elo_ratings: 22,572 rows (per-player-per-game cumulative deltas)
 - predictions: rows for 2026-03-21 slate (9 resolved with actual outcomes) + 2026-03-22 slate
 
+## Completed (2026-03-24) — Post-Mortem for 2026-03-23
+- **Post-mortem complete**: All 10 game files updated with actual scores, box scores, lineup accuracy,
+  and model diagnostics. Day summary appended to `memory/model-analysis.md`.
+- **2026-03-23 results**: 6-4 directional (60%), HIGH ATS 2-1 (67%), MODERATE ATS 2-1 (67%), MAE 15.89 pts.
+- **Three blowout magnitude misses**: ATL+39, POR+35, LAC+33 — all direction-correct but 25-30 pts above spread.
+- **Note**: 2026-03-23 game scores sourced from nba_api directly (not yet in DB). Run nightly job
+  then `PYTHONPATH=. uv run python downstream/track_outcomes.py` to resolve them in the predictions table.
+
 ## Completed This Session (2026-03-24) — Skill Updates
 - **`/analyze-game` redesigned**: now conversational — subagent gathers raw data, main context
   walks through findings with David section by section (lineup gaps, margin math, market edge,

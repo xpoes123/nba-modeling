@@ -25,8 +25,11 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import (
+    ADVERSE_MARKET_EDGE_THRESHOLD,
     CALIBRATION_PATH,
+    COVERAGE_GATE_THRESHOLD,
     DB_PATH,
+    ESPN_TEAM_ID_MAP,
     INITIAL_SEASON,
     LONG_TERM_INJURY_STREAK,
     MONTE_CARLO_SIMULATIONS,
@@ -34,11 +37,13 @@ from config import (
     RETURNING_PLAYER_EXTENDED_LOOKBACK,
     RETURNING_PLAYER_MAX_WINDOW_APPEARANCES,
     RETURNING_PLAYER_MIN_EXTENDED_GAMES,
+    RETURNING_PLAYER_MIN_SEASON_GAMES,
     RETURNING_PLAYER_MULTIPLIER,
+    RETURNING_PLAYER_SPARSE_MULTIPLIER,
     RETURNING_PLAYER_THRESHOLD,
     team_id_from_name,
 )
-from downstream.espn_client import get_nba_injuries, get_out_player_names
+from downstream.espn_client import EspnRosterPlayer, get_nba_injuries, get_nba_roster, get_out_player_names
 from downstream.calibration import load_calibration
 from downstream.lineup_sampler import (
     MinutesProfile,
@@ -257,6 +262,7 @@ def _build_minutes_profile_from_db(
     n_games: int = _LINEUP_LOOKBACK_GAMES,
     min_games: int = 3,
     before_date: str | None = None,
+    espn_roster: list[EspnRosterPlayer] | None = None,
 ) -> tuple[MinutesProfile, float]:
     """Build MinutesProfile from DB possession history.
 
@@ -369,12 +375,67 @@ def _build_minutes_profile_from_db(
         result = _inject_returning_players(
             result, team_id, conn, injured_names, player_id_to_name,
             profiles, season, n_window_games, before_date,
+            espn_roster=espn_roster,
         )
 
     logger.debug(
         "Team %s: %d players, coverage=%.1f%%", team_id, len(result), coverage_ratio * 100
     )
     return result, coverage_ratio
+
+
+def _get_season_possession_share(
+    player_id: str,
+    team_id: str,
+    season: str,
+    conn: sqlite3.Connection,
+    exclude_game_ids: list[str],
+) -> tuple[float, int] | None:
+    """Return (avg_share, n_games) from season-wide possession data outside the lookback windows.
+
+    Used for ESPN-roster players with zero appearances in both the recent and extended windows
+    (e.g. returning from a multi-month injury with no recent DB history).
+
+    Returns None if the player appeared in fewer than RETURNING_PLAYER_MIN_SEASON_GAMES.
+    """
+    # Fetch all offensive possessions for this team this season, excluding known-window games.
+    # We'll count per-game appearances in Python to avoid complex SQL parameter ordering.
+    exclusion_clause = ""
+    exclusion_params: list = []
+    if exclude_game_ids:
+        placeholders = ",".join("?" * len(exclude_game_ids))
+        exclusion_clause = f"AND game_id NOT IN ({placeholders})"
+        exclusion_params = list(exclude_game_ids)
+
+    off_cols = ["off_player_1", "off_player_2", "off_player_3", "off_player_4", "off_player_5"]
+    rows = conn.execute(
+        f"""
+        SELECT game_id, {', '.join(off_cols)}
+        FROM possessions
+        WHERE offense_team_id = ? AND season = ? {exclusion_clause}
+        """,
+        [team_id, season] + exclusion_params,
+    ).fetchall()
+
+    if not rows:
+        return None
+
+    # Group by game and count appearances
+    game_counts: dict[str, tuple[int, int]] = {}  # game_id → (appearances, total_poss)
+    for row in rows:
+        gid = row["game_id"]
+        appeared = any(row[col] == player_id for col in off_cols)
+        prev = game_counts.get(gid, (0, 0))
+        game_counts[gid] = (prev[0] + (1 if appeared else 0), prev[1] + 1)
+
+    # Only count games where player actually appeared
+    appeared_games = [(app, total) for app, total in game_counts.values() if app > 0]
+    n_games = len(appeared_games)
+    if n_games < RETURNING_PLAYER_MIN_SEASON_GAMES:
+        return None
+
+    avg_share = sum(app / (total * 5) for app, total in appeared_games) / n_games
+    return avg_share, n_games
 
 
 def _inject_returning_players(
@@ -387,12 +448,18 @@ def _inject_returning_players(
     season: str,
     n_window_games: int,
     before_date: str | None,
+    espn_roster: list[EspnRosterPlayer] | None = None,
 ) -> MinutesProfile:
     """Fix A: Inject returning players absent from the recent window but with strong ratings.
 
-    Queries all players on this team from current_ratings, checks if any qualify for injection:
-    not injured, < RETURNING_PLAYER_MAX_WINDOW_APPEARANCES in recent window, rating >= threshold,
-    and >= RETURNING_PLAYER_MIN_EXTENDED_GAMES in the extended lookback.
+    Two-phase injection:
+    Phase 1 — scan current_ratings for players with 1–2 recent appearances + ≥5 extended.
+               Players with 0 appearances use RETURNING_PLAYER_MULTIPLIER (0.70).
+               Players with 1–2 appearances use RETURNING_PLAYER_SPARSE_MULTIPLIER (0.40)
+               to reduce recency artifact noise from first-game-back outliers.
+    Phase 2 — if espn_roster provided, scan for players who are healthy on the ESPN roster
+               but have 0 appearances in BOTH recent + extended windows (multi-month absences).
+               Uses season-wide possession history as the injection share source (0.50 discount).
 
     Returns updated profile (original is unchanged if no players qualify).
     """
@@ -410,6 +477,8 @@ def _inject_returning_players(
     if not team_player_rows:
         return profile
 
+    player_overall: dict[str, float] = {r["player_id"]: r["overall"] for r in team_player_rows}
+
     # Query extended window once for the whole team (30 games)
     ext_profiles, ext_game_ids, _ = _get_team_possession_profiles(
         team_id, conn, RETURNING_PLAYER_EXTENDED_LOOKBACK, before_date=before_date
@@ -418,10 +487,8 @@ def _inject_returning_players(
 
     injected: dict[str, tuple[float, float]] = {}
 
-    for row in team_player_rows:
-        pid = row["player_id"]
-        overall = row["overall"]
-
+    # ---- Phase 1: scan current_ratings for sparse-but-appeared players ----
+    for pid, overall in player_overall.items():
         # Already in the profile — has sufficient recent history
         if pid in profile:
             continue
@@ -452,21 +519,77 @@ def _inject_returning_players(
         availability = w_sum / ext_window_weight if ext_window_weight > 0 else 0.0
         effective_ext_share = mean_ext_share * availability
 
-        # Inject at discounted share (0.70 = uncertainty discount for returning player)
-        injected_share = effective_ext_share * RETURNING_PLAYER_MULTIPLIER
+        # 1-2 recent appearances = sparse/uncertain return → lower discount to reduce noise
+        multiplier = RETURNING_PLAYER_SPARSE_MULTIPLIER if recent_appearances > 0 else RETURNING_PLAYER_MULTIPLIER
+        injected_share = effective_ext_share * multiplier
         injected_minutes = injected_share * 240
         raw_shares = [s for s, w in ext_shares]
         std_share = stdev(raw_shares) if len(raw_shares) > 1 else 0.03
 
         injected[pid] = (injected_minutes, std_share * 240)
         logger.info(
-            "Fix A: Injecting returning player %s (%s) | ovr=%.2f | "
-            "recent=%d/%d | extended=%d/%d | eff_share=%.1f%% → inject=%.1f%%",
+            "Fix A Phase 1: Injecting %s (%s) | ovr=%.2f | recent=%d/%d | "
+            "extended=%d/%d | eff_share=%.1f%% → inject=%.1f%% (mult=%.2f)",
             name, pid, overall,
             recent_appearances, n_window_games,
             ext_appearances, RETURNING_PLAYER_EXTENDED_LOOKBACK,
-            effective_ext_share * 100, injected_share * 100,
+            effective_ext_share * 100, injected_share * 100, multiplier,
         )
+
+    # ---- Phase 2: ESPN roster scan for players with zero window history ----
+    # Catches multi-month absences that Phase 1 misses (ext window doesn't reach them).
+    if espn_roster:
+        # Build name → player_id lookup for the team
+        name_to_pid: dict[str, str] = {
+            normalize_name(player_id_to_name.get(pid, "")): pid
+            for pid in player_overall
+        }
+
+        for roster_player in espn_roster:
+            if roster_player["is_injured"]:
+                continue
+            if roster_player["normalized_name"] in injured_names:
+                continue
+
+            pid = name_to_pid.get(roster_player["normalized_name"])
+            if pid is None:
+                continue
+
+            # Already handled: in main profile or Phase 1 injection
+            if pid in profile or pid in injected:
+                continue
+
+            overall = player_overall.get(pid, 0.0)
+            if overall < RETURNING_PLAYER_THRESHOLD:
+                continue
+
+            # Only fire for players with 0 appearances in BOTH windows
+            recent_appearances = len(window_profiles.get(pid, []))
+            if recent_appearances > 0:
+                continue
+            if len(ext_profiles.get(pid, [])) > 0:
+                continue
+
+            # Use season-wide possession history as injection source
+            season_result = _get_season_possession_share(
+                pid, team_id, season, conn, list(ext_game_ids)
+            )
+            if season_result is None:
+                continue
+
+            season_share, n_season_games = season_result
+            # 0.50 discount: season data may be months old, role may have changed
+            injected_share = season_share * 0.50
+            injected_minutes = injected_share * 240
+
+            name = player_id_to_name.get(pid, roster_player["display_name"])
+            injected[pid] = (injected_minutes, 0.03 * 240)
+            logger.info(
+                "Fix A Phase 2 (ESPN roster): Injecting %s (%s) | ovr=%.2f | "
+                "season=%d games | season_share=%.1f%% → inject=%.1f%%",
+                name, pid, overall,
+                n_season_games, season_share * 100, injected_share * 100,
+            )
 
     if not injected:
         return profile
@@ -569,8 +692,17 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
         print(f"  Notes    : {', '.join(notes) if notes else 'none'}")
 
         tier, acc_note = _confidence_tier(our_spread)
+        # Coverage gate: downgrade HIGH → MODERATE when either team has weak lineup coverage.
+        # A game with <85% coverage has elevated uncertainty regardless of spread magnitude.
+        if tier == "HIGH" and min(home_cov, away_cov) < COVERAGE_GATE_THRESHOLD:
+            tier = "MODERATE"
+            acc_note = f"82% dir acc — downgraded from HIGH (coverage {min(home_cov, away_cov):.0%} < {COVERAGE_GATE_THRESHOLD:.0%})"
         tier_counts[tier] += 1
         print(f"  Confidence: {tier}  ({acc_note})")
+
+        # Adverse market edge warning: market has likely priced in injury intel we're missing.
+        if spread_edge is not None and spread_edge < -ADVERSE_MARKET_EDGE_THRESHOLD:
+            print(f"  *** ADVERSE MARKET EDGE {abs(spread_edge):.1f} pts — market likely has injury intel. Do not bet against market direction.")
 
         if spread_edge is not None:
             spread_edges.append(abs(spread_edge))
@@ -649,6 +781,24 @@ def run_predictions(
     except Exception as exc:
         logger.warning("Injury report unavailable (%s) — proceeding with full rosters", exc)
 
+    # --- ESPN rosters for all teams playing tonight (Fix A Phase 2) ---
+    # Pre-fetch once per team so _inject_returning_players() can detect multi-month returners
+    # that have zero appearance history in both the 15- and 30-game lookback windows.
+    espn_rosters: dict[str, list[EspnRosterPlayer]] = {}
+    team_ids_tonight = set()
+    for g in games_odds:
+        for team_name in (g["home_team"], g["away_team"]):
+            nba_id = team_id_from_name(team_name)
+            if nba_id:
+                team_ids_tonight.add(nba_id)
+    for nba_id in team_ids_tonight:
+        espn_id = ESPN_TEAM_ID_MAP.get(nba_id)
+        if espn_id:
+            try:
+                espn_rosters[nba_id] = get_nba_roster(espn_id)
+            except Exception as exc:
+                logger.warning("ESPN roster fetch failed for team %s: %s", nba_id, exc)
+
     # --- Map team names from Odds API → nba.com IDs ---
     name_to_nba_id: dict[str, str] = {}
     for g in games_odds:
@@ -689,10 +839,12 @@ def run_predictions(
 
             # Build lineup profiles from our DB possession history
             home_mins, home_coverage = _build_minutes_profile_from_db(
-                home_nba_id, conn, injured_names, player_id_to_name, season=season
+                home_nba_id, conn, injured_names, player_id_to_name, season=season,
+                espn_roster=espn_rosters.get(home_nba_id),
             )
             away_mins, away_coverage = _build_minutes_profile_from_db(
-                away_nba_id, conn, injured_names, player_id_to_name, season=season
+                away_nba_id, conn, injured_names, player_id_to_name, season=season,
+                espn_roster=espn_rosters.get(away_nba_id),
             )
 
             if not home_mins or not away_mins:

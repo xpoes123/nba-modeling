@@ -1,6 +1,7 @@
-"""ESPN public injury API client (no auth required).
+"""ESPN public API client (no auth required).
 
-Endpoint: https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
+Injury endpoint: https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
+Roster endpoint: https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster
 """
 import logging
 from typing import TypedDict
@@ -12,6 +13,7 @@ from downstream.team_ratings import normalize_name
 logger = logging.getLogger(__name__)
 
 _ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+_ESPN_ROSTER_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{}/roster"
 
 # Statuses we consider a player definitively unavailable
 OUT_STATUSES = {"out", "doubtful", "suspension", "suspended", "gtd-out"}
@@ -83,3 +85,54 @@ def get_out_player_names(injuries: list[EspnInjury] | None = None) -> set[str]:
     if injuries is None:
         injuries = get_nba_injuries()
     return {inj["normalized_name"] for inj in injuries if inj["is_out"]}
+
+
+class EspnRosterPlayer(TypedDict):
+    espn_id: str
+    display_name: str
+    normalized_name: str
+    is_injured: bool  # True if player has any active injury designation in ESPN's roster data
+
+
+def get_nba_roster(espn_team_id: int) -> list[EspnRosterPlayer]:
+    """Fetch full roster for one NBA team from ESPN public API (no auth required).
+
+    Returns all 20-26 players on the roster, including injured players.
+    Use is_injured=False to filter to healthy/available players.
+
+    Note: status.type is always "active" in ESPN's API regardless of injury —
+    use the injuries[] array (is_injured flag) to detect unavailability.
+    """
+    url = _ESPN_ROSTER_URL.format(espn_team_id)
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        logger.error("ESPN roster API request failed for team %d: %s", espn_team_id, exc)
+        return []
+
+    result: list[EspnRosterPlayer] = []
+    for athlete in resp.json().get("athletes", []):
+        first = athlete.get("firstName", "")
+        last = athlete.get("lastName", "")
+        display_name = athlete.get("displayName", "") or f"{first} {last}".strip()
+        if not display_name:
+            continue
+
+        is_injured = len(athlete.get("injuries", [])) > 0
+
+        result.append(
+            EspnRosterPlayer(
+                espn_id=str(athlete.get("id", "")),
+                display_name=display_name,
+                normalized_name=normalize_name(display_name),
+                is_injured=is_injured,
+            )
+        )
+
+    n_healthy = sum(1 for p in result if not p["is_injured"])
+    logger.debug(
+        "ESPN roster team %d: %d total, %d healthy, %d injured",
+        espn_team_id, len(result), n_healthy, len(result) - n_healthy,
+    )
+    return result

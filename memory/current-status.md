@@ -147,24 +147,32 @@
   `memory/model-analysis.md`. No user interaction.
 - Files: `.claude/commands/analyze-game.md` (updated), `.claude/commands/post-mortem.md` (new)
 
+## Completed This Session (2026-03-26) — ESPN Roster Integration + Prediction Quality
+- **Fix A Phase 2 (ESPN roster-based injection)**: Players with 0 appearances in both 15-game
+  window AND 30-game extended window are now detected via ESPN roster endpoint. If the player
+  is on ESPN roster and not marked injured, fall back to season-wide possession share at 0.50
+  discount. Catches long-term returners (3+ months) that Fix A Phase 1 missed entirely.
+- **Sparse player recency artifact fix**: Players with 1-2 recent appearances now get
+  `RETURNING_PLAYER_SPARSE_MULTIPLIER=0.40` discount instead of 0.70. Prevents first-game-back
+  players from inflating team profiles.
+- **Coverage gate**: HIGH tier predictions auto-downgrade to MODERATE when any team has
+  <85% coverage. Confirmed edge case from 3/25 (BKN@GSW).
+- **Adverse market edge flag**: Print `*** ADVERSE MARKET EDGE N pts` warning when market
+  is ≥4 pts more bearish on our predicted winner. Prevents betting against market injury intel.
+- **ESPN team ID map**: Added `ESPN_TEAM_ID_MAP` to config.py (ESPN IDs differ from bdl_id).
+- **`get_nba_roster()`**: New function in espn_client.py fetching team roster from ESPN.
+- **`_get_season_possession_share()`**: New helper in predictions.py for season-wide fallback.
+- **89/89 tests pass** (3 new tests covering sparse multiplier, ESPN injection, injured skip).
+- **Backtest**: 70.7% dir_acc on 1032 games (vs 69.6% on 1002 games for v5 — not regression).
+  Backtest doesn't use ESPN/Fix A — confirms no base model regression.
+
 ## Next Steps
-1. **Injury modeling backtest comparison** — Fix A + Fix B deployed (2026-03-23). Need to run
-   full-season backtest to measure before/after impact:
-   ```bash
-   PYTHONPATH=. uv run python downstream/backtest.py --start 2026-01-01 --end 2026-03-23
-   ```
-   Compare MAE/corr/dir_acc to v5 baseline (MAE=10.76, dir=69.6%).
-2. **Fix A extended lookback gap**: `RETURNING_PLAYER_EXTENDED_LOOKBACK=30` games is insufficient
-   for players out 3+ months (e.g. Steph Curry, last played Dec 12-14 = ~70 GSW games ago).
-   The 30-game window doesn't reach him. Options:
-   - Increase extended lookback to 60-70 games (catches most long-term cases)
-   - Add a separate "super-long-term" path for players with 0 appearances in 30 games but
-     played earlier in the season (requires a minimum season-games-played threshold)
-   - Ask David before changing — need to confirm which players are actually returning "soon"
-2. **CLV tracking** — deferred to David's separate repo. Do not build here.
-3. **Tanking penalty** — Kings, Jazz, Wizards, Nets are tanking (2025-26). Spec in
+1. **CLV tracking** — deferred to David's separate repo. Do not build here.
+2. **Tanking penalty** — Kings, Jazz, Wizards, Nets are tanking (2025-26). Spec in
    `memory/model-analysis.md` item #10. Requires knowing which teams own their draft picks;
    David confirms this at the start of each season.
+3. **B2B recalibration** — -3.05 penalty too small (confirmed 3/25: CLE miss by 19.8 pts).
+   Run calibration with larger B2B dataset to get a better coefficient.
 4. See `memory/model-analysis.md` for full improvement backlog.
 
 ## Completed This Session (2026-03-23) — Injury Modeling Fix A + Fix B

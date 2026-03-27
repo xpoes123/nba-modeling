@@ -50,6 +50,18 @@ RETURNING_PLAYER_MULTIPLIER = 0.70           # discount on historical share (unc
 # Long-term injury hard exclusion (Fix B — predictions.py, consistency update in backtest.py)
 LONG_TERM_INJURY_STREAK = 5                  # consecutive recent absences to trigger full exclusion
 
+# Fix A extension: sparse + season-wide injection
+# Players with 1-2 recent appearances (first game back) get a lower discount than full returners
+RETURNING_PLAYER_SPARSE_MULTIPLIER = 0.40    # vs 0.70 for 0-appearance players
+# Min appearances in season-wide history (outside extended window) for ESPN-roster-only injection
+RETURNING_PLAYER_MIN_SEASON_GAMES = 5
+
+# Prediction report display gates
+# HIGH tier with any team coverage below this is downgraded to MODERATE in the report
+COVERAGE_GATE_THRESHOLD = 0.85
+# Warn when market is this many pts more bearish on our predicted winner (market has injury intel)
+ADVERSE_MARKET_EDGE_THRESHOLD = 4.0
+
 # nba.com team ID → metadata mapping
 # bdl_id: balldontlie team ID
 NBA_TEAM_MAP: dict[str, dict] = {
@@ -83,6 +95,41 @@ NBA_TEAM_MAP: dict[str, dict] = {
     "1610612761": {"name": "Toronto Raptors",         "abbrev": "TOR", "bdl_id": 28},
     "1610612762": {"name": "Utah Jazz",               "abbrev": "UTA", "bdl_id": 29},
     "1610612764": {"name": "Washington Wizards",      "abbrev": "WAS", "bdl_id": 30},
+}
+
+# ESPN numeric team IDs (for the roster endpoint — different from bdl_id)
+# https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{espn_id}/roster
+ESPN_TEAM_ID_MAP: dict[str, int] = {
+    "1610612737": 1,   # ATL
+    "1610612738": 2,   # BOS
+    "1610612751": 17,  # BKN
+    "1610612766": 30,  # CHA
+    "1610612741": 4,   # CHI
+    "1610612739": 5,   # CLE
+    "1610612742": 6,   # DAL
+    "1610612743": 7,   # DEN
+    "1610612765": 8,   # DET
+    "1610612744": 9,   # GSW
+    "1610612745": 10,  # HOU
+    "1610612754": 11,  # IND
+    "1610612746": 12,  # LAC
+    "1610612747": 13,  # LAL
+    "1610612763": 29,  # MEM
+    "1610612748": 14,  # MIA
+    "1610612749": 15,  # MIL
+    "1610612750": 16,  # MIN
+    "1610612740": 3,   # NOP
+    "1610612752": 18,  # NYK
+    "1610612760": 25,  # OKC
+    "1610612753": 19,  # ORL
+    "1610612755": 20,  # PHI
+    "1610612756": 21,  # PHX
+    "1610612757": 22,  # POR
+    "1610612758": 23,  # SAC
+    "1610612759": 24,  # SAS
+    "1610612761": 28,  # TOR
+    "1610612762": 26,  # UTA
+    "1610612764": 27,  # WAS
 }
 
 # Reverse lookups derived from NBA_TEAM_MAP

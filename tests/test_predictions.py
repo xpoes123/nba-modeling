@@ -2,10 +2,13 @@
 import math
 import sqlite3
 
+from downstream.espn_client import EspnRosterPlayer
 from downstream.lineup_sampler import MinutesProfile
 from downstream.predictions import (
     _build_minutes_profile_from_db,
     _consecutive_recent_absences,
+    _get_team_possession_profiles,
+    _inject_returning_players,
 )
 
 
@@ -431,4 +434,213 @@ class TestReturningPlayerInjection:
         )
 
         assert STAR not in profile, "Fix A should be disabled when season=None"
+        conn.close()
+
+    def test_sparse_returning_player_gets_lower_multiplier(self):
+        """Player with 1 recent appearance uses RETURNING_PLAYER_SPARSE_MULTIPLIER=0.40.
+
+        We call _inject_returning_players directly with identical ext-window data but two
+        different window_profiles (0 vs 1 recent appearance) so the ratio is purely due
+        to the multiplier, not a difference in ext window composition.
+        """
+        from config import RETURNING_PLAYER_MULTIPLIER, RETURNING_PLAYER_SPARSE_MULTIPLIER
+
+        TEAM = "1610612737"
+        STAR = "star_pid"
+        OTHERS = ["p1", "p2", "p3", "p4"]
+
+        conn = _make_db()
+        # 15 ext games (Jan) where star played, then 15 rec games (Feb) where star is absent.
+        # 30-game ext window covers all 30 → star in slots 15-29 (the older Jan games).
+        for i in range(15):
+            _insert_game(conn, f"ext_{i:02d}", f"2026-01-{i + 1:02d}", home=TEAM, away="OPP")
+            _insert_possessions(conn, f"ext_{i:02d}", TEAM, [STAR] + OTHERS)
+        for i in range(15):
+            _insert_game(conn, f"rec_{i:02d}", f"2026-02-{i + 1:02d}", home=TEAM, away="OPP")
+            _insert_possessions(conn, f"rec_{i:02d}", TEAM, OTHERS + ["p5"])
+
+        for pid in [STAR] + OTHERS + ["p5"]:
+            name = "Star Player" if pid == STAR else f"Player {pid}"
+            conn.execute("INSERT OR IGNORE INTO players VALUES (?, ?, ?)", (pid, name, TEAM))
+        conn.execute(
+            "INSERT INTO current_ratings VALUES (?, '2025-26', 3.0, 0.5, 0.0, 3.5, 'elo')",
+            (STAR,),
+        )
+        conn.commit()
+
+        injured: set[str] = set()
+        pid_to_name = {STAR: "Star Player", **{p: f"Player {p}" for p in OTHERS + ["p5"]}}
+        empty_profile = MinutesProfile()
+
+        # Fetch the 15-game window profiles (star absent → empty entry for star)
+        window_zero, _, _ = _get_team_possession_profiles(TEAM, conn, 15)
+
+        # Scenario A: 0 recent appearances → RETURNING_PLAYER_MULTIPLIER (0.70)
+        profile_zero = _inject_returning_players(
+            empty_profile, TEAM, conn, injured, pid_to_name,
+            window_zero, "2025-26", 15, None,
+        )
+
+        # Scenario B: simulate 1 recent appearance by adding star to window_profiles
+        # (same ext window in DB → same effective_ext_share; only the multiplier differs)
+        window_sparse = dict(window_zero)
+        window_sparse[STAR] = [(0.20, 1.0)]  # 1 appearance, slot 0 weight
+
+        profile_sparse = _inject_returning_players(
+            empty_profile, TEAM, conn, injured, pid_to_name,
+            window_sparse, "2025-26", 15, None,
+        )
+
+        assert STAR in profile_zero, "0-appearance star should be injected"
+        assert STAR in profile_sparse, "1-appearance star should still be injected"
+
+        zero_minutes, _ = profile_zero[STAR]
+        sparse_minutes, _ = profile_sparse[STAR]
+
+        # Both scenarios use the same ext_profiles → same effective_ext_share.
+        # Only the multiplier differs: 0.40 vs 0.70. Ratio should be ≈ 0.40/0.70 ≈ 0.571.
+        ratio = sparse_minutes / zero_minutes if zero_minutes > 0 else 0.0
+        assert 0.50 <= ratio <= 0.65, (
+            f"Expected ratio ≈ {RETURNING_PLAYER_SPARSE_MULTIPLIER / RETURNING_PLAYER_MULTIPLIER:.2f} "
+            f"(sparse/standard), got {ratio:.3f}. "
+            f"zero={zero_minutes:.2f}min, sparse={sparse_minutes:.2f}min"
+        )
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Fix A Phase 2 — ESPN roster injection for zero-window players
+# ---------------------------------------------------------------------------
+
+class TestEspnRosterInjection:
+    def test_zero_window_player_injected_from_season_history(self):
+        """Player with 0 appearances in both 15- and 30-game windows, but with season-wide
+        possession history, is injected when they appear on the ESPN roster as healthy.
+        """
+        TEAM = "1610612737"
+        STAR = "returning_star"
+        OTHERS = ["p1", "p2", "p3", "p4"]
+        ALL_FIVE = [STAR] + OTHERS
+
+        conn = _make_db()
+
+        # Season-early games (Oct-Nov): star played regularly — 10 games
+        for i in range(10):
+            month = 10 + (i // 5)  # Oct for 0-4, Nov for 5-9
+            day = (i % 5) + 1
+            gid = f"early_{i:02d}"
+            date = f"2025-{month:02d}-{day:02d}"
+            _insert_game(conn, gid, date, home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, ALL_FIVE)
+
+        # Extended window (Feb, 15 games): star absent (long-term injury)
+        for i in range(15):
+            gid = f"ext_{i:02d}"
+            date = f"2026-02-{i + 1:02d}"
+            _insert_game(conn, gid, date, home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, OTHERS + ["p5"])
+
+        # Recent window (Mar, 15 games): star absent
+        for i in range(15):
+            gid = f"rec_{i:02d}"
+            date = f"2026-03-{i + 1:02d}"
+            _insert_game(conn, gid, date, home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, OTHERS + ["p5"])
+
+        for pid in [STAR] + OTHERS + ["p5"]:
+            name = "Returning Star" if pid == STAR else f"Player {pid}"
+            conn.execute(
+                "INSERT OR IGNORE INTO players VALUES (?, ?, ?)", (pid, name, TEAM)
+            )
+        conn.execute(
+            "INSERT INTO current_ratings VALUES (?, '2025-26', 3.0, 0.5, 0.0, 3.5, 'elo')",
+            (STAR,),
+        )
+        conn.commit()
+
+        injured: set[str] = set()
+        pid_to_name = {STAR: "Returning Star", **{p: f"Player {p}" for p in OTHERS + ["p5"]}}
+
+        # Without ESPN roster: star has 0/30 extended appearances → NOT injected by Phase 1
+        profile_no_roster, _ = _build_minutes_profile_from_db(
+            TEAM, conn, injured, pid_to_name, season="2025-26"
+        )
+        assert STAR not in profile_no_roster, (
+            "Star with no extended window history should not be injected without ESPN roster"
+        )
+
+        # With ESPN roster marking star as healthy: Phase 2 finds season-wide history → injected
+        espn_roster: list[EspnRosterPlayer] = [
+            EspnRosterPlayer(
+                espn_id="999",
+                display_name="Returning Star",
+                normalized_name="returning star",
+                is_injured=False,
+            )
+        ]
+        profile_with_roster, _ = _build_minutes_profile_from_db(
+            TEAM, conn, injured, pid_to_name, season="2025-26", espn_roster=espn_roster
+        )
+        assert STAR in profile_with_roster, (
+            "Star on ESPN roster with season-wide history should be injected via Phase 2"
+        )
+        injected_minutes, _ = profile_with_roster[STAR]
+        assert injected_minutes > 0
+        # Season share ~0.20 (1 of 5 equal players) × 0.50 discount → ~24 min out of 240
+        assert injected_minutes < 0.20 * 240, "Injected minutes should be discounted from historical share"
+
+        conn.close()
+
+    def test_espn_roster_injured_player_not_injected(self):
+        """Player on ESPN roster but marked is_injured=True should not be injected by Phase 2."""
+        TEAM = "1610612737"
+        STAR = "returning_star"
+        OTHERS = ["p1", "p2", "p3", "p4"]
+        ALL_FIVE = [STAR] + OTHERS
+
+        conn = _make_db()
+
+        # Season-early games: star played regularly
+        for i in range(10):
+            month = 10 + (i // 5)
+            day = (i % 5) + 1
+            gid = f"early_{i:02d}"
+            _insert_game(conn, gid, f"2025-{month:02d}-{day:02d}", home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, ALL_FIVE)
+
+        # Recent 30 games: star absent
+        for i in range(15):
+            gid = f"ext_{i:02d}"
+            _insert_game(conn, gid, f"2026-02-{i + 1:02d}", home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, OTHERS + ["p5"])
+        for i in range(15):
+            gid = f"rec_{i:02d}"
+            _insert_game(conn, gid, f"2026-03-{i + 1:02d}", home=TEAM, away="OPP")
+            _insert_possessions(conn, gid, TEAM, OTHERS + ["p5"])
+
+        for pid in [STAR] + OTHERS + ["p5"]:
+            name = "Returning Star" if pid == STAR else f"Player {pid}"
+            conn.execute("INSERT OR IGNORE INTO players VALUES (?, ?, ?)", (pid, name, TEAM))
+        conn.execute(
+            "INSERT INTO current_ratings VALUES (?, '2025-26', 3.0, 0.5, 0.0, 3.5, 'elo')",
+            (STAR,),
+        )
+        conn.commit()
+
+        injured: set[str] = set()
+        pid_to_name = {STAR: "Returning Star", **{p: f"Player {p}" for p in OTHERS + ["p5"]}}
+
+        # Star is on ESPN roster but is_injured=True → should NOT be injected
+        espn_roster: list[EspnRosterPlayer] = [
+            EspnRosterPlayer(
+                espn_id="999",
+                display_name="Returning Star",
+                normalized_name="returning star",
+                is_injured=True,
+            )
+        ]
+        profile, _ = _build_minutes_profile_from_db(
+            TEAM, conn, injured, pid_to_name, season="2025-26", espn_roster=espn_roster
+        )
+        assert STAR not in profile, "Injured ESPN roster player should not be injected"
         conn.close()

@@ -149,3 +149,53 @@ Edge is thin (+0.74) for a HIGH-confidence pick. Wait for Steph Curry confirmati
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: GSW 109, BKN 106
+- Actual margin: GSW +3 (home_margin = 109−106 = +3)
+- Our spread: GSW +12.3 (model strongly favored GSW) | Market: GSW −11.5 | Error: +9.3 pts
+
+### Result
+- Directional: **WIN** — predicted GSW to win, GSW won by 3
+- ATS: **NO COVER** — market had GSW −11.5, GSW won by only 3
+
+### Actual Box Score
+
+**GSW**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Gui Santos | 35 | 31 | 3 | 1 |
+| Brandin Podziemski | 35 | 22 | 6 | 5 |
+| De'Anthony Melton | 28 | 14 | 9 | 3 |
+| Kristaps Porzingis | 27 | 17 | 5 | 2 |
+| Draymond Green | 34 | 7 | 5 | 3 |
+| Gary Payton II | 24 | 10 | 7 | 2 |
+| Will Richard | 20 | 3 | 2 | 0 |
+| LJ Cryer | 15 | 0 | 2 | 2 |
+
+**BKN**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Ben Saraf | 32 | 14 | 4 | 7 |
+| Ziaire Williams | 24 | 19 | 1 | 2 |
+| Jalen Wilson | 23 | 15 | 3 | 2 |
+| Chaney Johnson | 19 | 11 | 1 | 3 |
+| Drake Powell | 34 | 10 | 2 | 0 |
+| Josh Minott | 23 | 8 | 2 | 3 |
+| Nic Claxton | 20 | 8 | 4 | 2 |
+| Terance Mann | 23 | 4 | 5 | 1 |
+
+### Lineup Accuracy
+- **GSW lineup somewhat matched**: Santos (31 pts) and Porzingis (17 pts) were not in the pre-game analysis as high-share contributors. Pre-game flagged BKN's 79% coverage and elevated sigma.
+- **BKN competed hard**: Ziaire Williams 19, Wilson 15, Johnson 11 — BKN put up a fight despite being massive underdogs.
+- Pre-game correctly noted the elevated sim_std (14.35) — this was indeed a high-variance game.
+
+### What the Model Got Right / Wrong
+1. **Direction correct — but barely**: GSW won by 3 when model predicted a 12-pt blowout. This is the inverse of blowout compression — model dramatically overestimated the GSW advantage.
+2. **GSW significantly underperformed their rating**: Model predicted a dominant win; GSW barely survived vs a bottom-5 team. This may reflect BKN's home road split (they're 7-? away) or GSW having lineup/fatigue issues not in the profile.
+3. **BKN coverage gap warning was real**: BKN had 79% coverage (21% unknown players). Those unknown players apparently contributed significantly. This is an example where low coverage on the away team means the model's prediction of a blowout was based on incomplete information about BKN's actual available talent.
+4. **Elevated sigma (14.35) was justified** — the large coverage gap created a genuinely uncertain game. DO NOT bet heavily when both teams have large coverage gaps even at HIGH tier.

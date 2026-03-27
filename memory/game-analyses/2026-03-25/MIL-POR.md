@@ -135,3 +135,53 @@ POR is the correct side at HIGH confidence. The -2.1 adverse edge (market more a
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: POR 130, MIL 99
+- Actual margin: POR +31 (home_margin = 130−99 = +31)
+- Our spread: POR +10.4 | Market: POR −12.5 | Error: −20.6 pts (underestimated POR)
+
+### Result
+- Directional: **WIN** — predicted POR to win, POR won by 31
+- ATS: **POR COVER** — market had POR −12.5, POR won by 31. Covered by 18.5 pts.
+
+### Actual Box Score
+
+**POR**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Scoot Henderson | 24 | 23 | 3 | 4 |
+| Deni Avdija | 25 | 18 | 4 | 7 |
+| Jerami Grant | 24 | 18 | 2 | 0 |
+| Jrue Holiday | 26 | 13 | 5 | 8 |
+| Donovan Clingan | 25 | 14 | 15 | 3 |
+| Toumani Camara | 24 | 10 | 3 | 1 |
+| Matisse Thybulle | 23 | 14 | 8 | 0 |
+| Kris Murray | 21 | 5 | 3 | 2 |
+
+**MIL**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Ryan Rollins | 31 | 36 | 4 | 4 |
+| Ousmane Dieng | 33 | 16 | 4 | 4 |
+| Taurean Prince | 29 | 13 | 6 | 2 |
+| AJ Green | 34 | 5 | 4 | 5 |
+| Pete Nance | 31 | 6 | 4 | 2 |
+| Jericho Sims | 29 | 12 | 6 | 2 |
+| Andre Jackson Jr. | 21 | 8 | 3 | 1 |
+| Gary Trent Jr. | 19 | 0 | 0 | 0 |
+
+### Lineup Accuracy
+- **POR full lineup matched**: Holiday/Grant/Henderson/Clingan/Avdija all contributed as expected. Avdija (9 games, flagged as borderline) played 25 solid min.
+- **MIL's thin rotation exposed**: Giannis + Kevin Porter Jr. both OUT confirmed. Ryan Rollins 36 pts was the only bright spot in a blowout. MIL's negative-rated players (Turner −3.46, Sims −3.16, Trent −3.32) all played significant minutes. Gary Trent Jr. 0 pts in 19 min.
+- Pre-game file nailed the MIL situation: "Myles Turner −3.46, Jericho Sims −3.16, Gary Trent Jr. −3.32 anchor the rotation. This is a bad basketball team tonight."
+
+### What the Model Got Right / Wrong
+1. **Direction correct (HIGH tier)** — POR dominated as predicted. Pre-game assessment was accurate.
+2. **Classic blowout compression**: model predicted POR by 10.4, market said 12.5, actual was 31. Model undershoots by ~20 pts. Consistent with every other large-mismatch game this season.
+3. **Pre-game analysis identified the right dynamics**: Giannis out, MIL full of negative-rated players, POR home with solid depth. The prediction was right on direction; only the magnitude was compressed.
+4. **Market at −12.5 was still conservative** — actual margin was 31, market underestimated by 18.5 pts. On large mismatches, even market undershoots. Do NOT fade the direction on these games.

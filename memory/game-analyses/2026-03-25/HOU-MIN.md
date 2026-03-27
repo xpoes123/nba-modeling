@@ -54,3 +54,53 @@ HOU has Durant but overall team depth is similar to MIN.
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: MIN 110, HOU 108
+- Actual margin: MIN +2 (home_margin = 110−108 = +2)
+- Our spread: MIN +1.2 (model favored MIN home) | Market: HOU −1.5 | Error: −0.8 pts
+
+### Result
+- Directional: **WIN** — predicted MIN to win, MIN won by 2
+- ATS: **MIN COVER** — market had HOU −1.5 (MIN +1.5 underdog), MIN won by 2. Cover.
+
+### Actual Box Score
+
+**HOU**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Kevin Durant | 43 | 30 | 3 | 8 |
+| Alperen Sengun | 43 | 30 | 6 | 3 |
+| Jabari Smith Jr. | 48 | 16 | 12 | 1 |
+| Amen Thompson | 45 | 11 | 9 | 10 |
+| Reed Sheppard | 28 | 10 | 8 | 3 |
+| Tari Eason | 21 | 3 | 8 | 0 |
+| Aaron Holiday | 12 | 3 | 2 | 1 |
+| Clint Capela | 10 | 0 | 4 | 0 |
+
+**MIN**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Julius Randle | 42 | 24 | 6 | 6 |
+| Jaden McDaniels | 37 | 25 | 2 | 0 |
+| Donte DiVincenzo | 36 | 17 | 3 | 2 |
+| Naz Reid | 31 | 14 | 13 | 1 |
+| Bones Hyland | 30 | 8 | 0 | 8 |
+| Kyle Anderson | 30 | 3 | 5 | 3 |
+| Mike Conley | 29 | 5 | 5 | 6 |
+| Rudy Gobert | 28 | 14 | 14 | 1 |
+
+### Lineup Accuracy
+- **HOU heavy minutes: Jabari Smith 47:36, Thompson 45:05, Durant 43:07, Sengun 42:50** — this strongly suggests the game went to overtime. HOU played 4 players 43+ min and still lost by 2.
+- **MIN balanced attack**: 5 players between 14-25 pts. Depth won over star power. DiVincenzo (model's top-rated MIN player) contributed 17 pts.
+- Anthony Edwards NOT in top-8 minutes — confirms his low +0.17 overall was an injury/rest artifact. He likely had limited or no role tonight.
+
+### What the Model Got Right / Wrong
+1. **Best prediction of the night** — error of only 0.8 pts. Model said MIN by 1.2, actual MIN by 2. Near-perfect.
+2. **Direction flip validated against market** — market had HOU −1.5, our model flipped to MIN. MIN won. The +2.7 direction-flip edge was real.
+3. **Star-heavy HOU vs depth MIN pattern confirmed**: Durant 30 + Sengun 30 (combined 60 pts!) in likely-OT, still lost. MIN's 5-man balanced attack (Randle/McDaniels/DiVincenzo/Reid/Gobert all contributing) outworked the HOU star duo. Consistent with our documented pattern from 3/23 post-mortem.
+4. **Anthony Edwards low rating explained**: he played minimal or no role tonight (not in top-8 min). Not a model error — he was genuinely out or limited.

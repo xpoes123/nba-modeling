@@ -56,3 +56,52 @@ SAS full strength: Wembanyama + Champagnie + Vassell are elite. ~19% coverage ga
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: SAS 123, MEM 98
+- Actual margin: MEM −25 (home_margin = 98−123 = −25; SAS won by 25)
+- Our spread: SAS −14.5 | Market: SAS −16.5 | Error: +10.5 pts (underestimated SAS margin)
+
+### Result
+- Directional: **WIN** — predicted SAS to win, SAS won by 25
+- ATS: **SAS COVER** — market had SAS −16.5, SAS won by 25. Covered by 8.5 pts.
+
+### Actual Box Score
+
+**SAS**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Victor Wembanyama | 27 | 19 | 15 | 3 |
+| Devin Vassell | 26 | 19 | 7 | 4 |
+| Stephon Castle | 26 | 15 | 3 | 9 |
+| Keldon Johnson | 22 | 15 | 7 | 3 |
+| Julian Champagnie | 26 | 13 | 8 | 2 |
+| Dylan Harper | 23 | 10 | 5 | 6 |
+| Harrison Barnes | 22 | 11 | 2 | 2 |
+| Carter Bryant | 15 | 5 | 1 | 0 |
+
+**MEM**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| GG Jackson | 30 | 20 | 7 | 2 |
+| Olivier-Maxence Prosper | 25 | 17 | 5 | 0 |
+| Walter Clayton Jr. | 22 | 10 | 2 | 6 |
+| Javon Small | 30 | 8 | 3 | 5 |
+| Cam Spencer | 30 | 1 | 2 | 7 |
+| Cedric Coward | 27 | 12 | 1 | 4 |
+| Taylor Hendricks | 28 | 2 | 8 | 0 |
+| Tyler Burton | 24 | 6 | 2 | 1 |
+
+### Lineup Accuracy
+- **Wembanyama managed to 27 min** (comfortable lead) but still 19/15/3. SAS shared the ball well — 5 players in double figures.
+- **MEM showed a very thin rotation** — GG Jackson 20 pts was the only real contributor. Cam Spencer 1 pt (starter!). Confirms model's read on MEM as deeply depleted.
+- Pre-game file noted both teams heavily depleted (~80% coverage each). Actual lineups matched this assessment.
+
+### What the Model Got Right / Wrong
+1. **Direction correct, magnitude compressed** — model said SAS −14.5, market said −16.5, actual was −25. Classic blowout compression. Our model undershoots the magnitude on large mismatches.
+2. **Market was right to go −16.5** — market had more aggressive estimate and was still short by 8.5 pts. When model and market both agree on a large spread AND market > model, actual outcomes often exceed both.
+3. **Blowout pattern confirmed**: 3rd data point on the same pattern this season (ATL+39, POR+35 from 3/23, now SAS +25). Model gets direction, compresses magnitude by 8-12 pts.

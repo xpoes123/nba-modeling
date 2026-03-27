@@ -138,3 +138,51 @@ OKC has higher offense; BOS has meaningfully better defense. The model sees thes
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: BOS 119, OKC 109
+- Actual margin: BOS +10 (home wins; home_margin = +10)
+- Our spread: BOS +1.7 | Market: OKC −2.0 (market favored away OKC) | Error: −8.3 pts (underestimated BOS)
+
+### Result
+- Directional: **WIN** — predicted BOS to win, BOS won by 10
+- ATS: **BOS COVER** — market had OKC −2 (BOS +2 underdog), BOS won by 10. Cover.
+
+### Actual Box Score
+
+**BOS**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Jaylen Brown | 39 | 31 | 8 | 8 |
+| Jayson Tatum | 35 | 19 | 12 | 7 |
+| Derrick White | 33 | 12 | 2 | 6 |
+| Payton Pritchard | 33 | 14 | 2 | 1 |
+| Neemias Queta | 30 | 13 | 5 | 2 |
+| Sam Hauser | 29 | 9 | 5 | 0 |
+| Baylor Scheierman | 20 | 11 | 5 | 1 |
+| Luka Garza | 12 | 7 | 2 | 0 |
+
+**OKC**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Shai Gilgeous-Alexander | 37 | 33 | 2 | 8 |
+| Luguentz Dort | 22 | 14 | 5 | 0 |
+| Chet Holmgren | 26 | 10 | 5 | 0 |
+| Alex Caruso | 21 | 9 | 4 | 2 |
+| Ajay Mitchell | 25 | 8 | 3 | 2 |
+| Cason Wallace | 24 | 7 | 4 | 0 |
+| Jalen Williams | 24 | 7 | 3 | 3 |
+| Isaiah Hartenstein | 22 | 6 | 5 | 2 |
+
+### Lineup Accuracy
+- BOS lineup matched profile well — Brown/Tatum/White/Pritchard are core. Queta at 30 min (center) consistent with profile.
+- OKC: SGA 33 pts but OKC still lost. Jalen Williams (7 pts, 24 min) and Holmgren (10 pts, 26 min) underperformed on the road.
+
+### What the Model Got Right / Wrong
+1. **Best model call of the day against the market** — model liked BOS +1.7 vs market OKC −2.0. BOS won by 10. Edge of +4.68 was the right direction.
+2. **Magnitude underestimated** — predicted BOS by 1.7, actual BOS by 10. BOS's depth (5 players in double figures) outpaced OKC's star-heavy reliance on SGA.
+3. **Validates HOME court advantage for elite teams** — BOS's above-average HCA was the model's edge here. Market incorrectly sent OKC as road favorites.

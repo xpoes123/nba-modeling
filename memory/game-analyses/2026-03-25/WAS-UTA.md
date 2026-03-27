@@ -153,3 +153,54 @@ UTA is modeled as a below-average team (NET=-0.24) but is above-average relative
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: WAS 133, UTA 110
+- Actual margin: UTA −23 (home_margin = 110−133 = −23; WAS won by 23)
+- Our spread: UTA +7.85 (model favored UTA) | Market: UTA −4.5 | Error: +29.7 pts
+
+### Result
+- Directional: **LOSS** — predicted UTA to win, WAS won by 23
+- ATS: **NO COVER** — market had UTA −4.5, UTA lost by 23
+
+### Actual Box Score
+
+**WAS**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Julian Reese | 30 | 26 | 17 | 0 |
+| Jaden Hardy | 27 | 21 | 2 | 0 |
+| Will Riley | 22 | 19 | 10 | 5 |
+| Sharife Cooper | 25 | 17 | 4 | 6 |
+| Bub Carrington | 24 | 12 | 2 | 3 |
+| Leaky Black | 40 | 11 | 7 | 3 |
+| Jamir Watkins | 29 | 8 | 6 | 2 |
+| Anthony Gill | 22 | 8 | 6 | 5 |
+
+**UTA**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Cody Williams | 37 | 24 | 4 | 1 |
+| Kennedy Chandler | 34 | 14 | 1 | 8 |
+| Blake Hinson | 11 | 21 | 0 | 1 |
+| Ace Bailey | 29 | 15 | 5 | 3 |
+| Bez Mbeng | 44 | 11 | 5 | 6 |
+| Elijah Harkless | 30 | 10 | 3 | 6 |
+| John Konchar | 38 | 8 | 14 | 5 |
+| Oscar Tshiebwe | 17 | 7 | 8 | 4 |
+
+### Lineup Accuracy
+- **Lauri Markkanen NOT in the box score** — correctly excluded by Fix B (14 consecutive DNPs). The pre-game file was correct that he is not a recency artifact risk — he simply didn't play.
+- **WAS exceeded their model rating dramatically**: Riley (−3.04 OVR) put up 19/10, Carrington (−4.20 OVR) had 12 pts — two of the worst-rated players on the roster outperformed their RAPM by a wide margin.
+- **UTA's healthy lineup was weak**: Mbeng (44 min! = likely OT), Konchar (14 reb), Williams (24 pts) — but the bench depth completely collapsed.
+- Kyle Filipowski (profiled, 9.7% share) did NOT appear in top minutes — likely short rotations or DNP.
+
+### What the Model Got Right / Wrong
+1. **Biggest miss of the night (+29.7 pts off)** — worst prediction of the post-mortem. Model had UTA +7.85, WAS won by 23.
+2. **UTA's "healthy" roster was worse than rated** — model saw a below-average but real team (NET=−0.24); actual UTA played like a G-League squad without Markkanen, George, and Kessler. The modeled healthy players (Harkless, Ace Bailey, Cody Williams) just lost badly.
+3. **WAS individual game-to-game variance is extreme** — WAS's top players (Riley −3.04, Carrington −4.20 RAPM) put up 19/10 and 12 pts respectively. RAPM can't predict hot shooting nights from bad players. WAS's very-negative-rated players are dangerous to bet against on any given night.
+4. **The pre-game analysis asked the right question**: "is the market soft because of UTA injury uncertainty, or because WAS is quietly better?" Answer: WAS had a historically good offensive night against a depleted UTA team.

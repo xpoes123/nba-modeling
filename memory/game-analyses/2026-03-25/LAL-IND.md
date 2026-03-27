@@ -134,3 +134,51 @@ These four collectively represent ~18.6% of IND's profile weight. The model corr
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: LAL 137 @ IND 130
+- Actual margin: IND −7 (LAL won by 7; home_margin = 130−137 = −7)
+- Our spread: LAL −10.2 | Market: LAL −9.5 | Error: −3.2 pts (model slightly overestimated LAL margin)
+
+### Result
+- Directional: **WIN** — predicted LAL to win, LAL won
+- ATS: **IND COVER** — market had LAL −9.5, LAL won by only 7. IND +9.5 covered.
+
+### Actual Box Score
+
+**LAL**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Luka Doncic | 38 | 43 | 6 | 7 |
+| Austin Reaves | 38 | 25 | 1 | 8 |
+| Jaxson Hayes | 36 | 21 | 10 | 1 |
+| LeBron James | 34 | 23 | 9 | 9 |
+| Jake LaRavia | 29 | 6 | 5 | 1 |
+| Luke Kennard | 28 | 8 | 2 | 2 |
+| Bronny James | 13 | 4 | 1 | 1 |
+| Jarred Vanderbilt | 12 | 5 | 1 | 0 |
+
+**IND**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Andrew Nembhard | 34 | 14 | 2 | 19 |
+| Aaron Nesmith | 32 | 14 | 3 | 1 |
+| Jay Huff | 32 | 18 | 6 | 1 |
+| Pascal Siakam | 30 | 20 | 8 | 1 |
+| Jarace Walker | 30 | 15 | 6 | 4 |
+| Obi Toppin | 20 | 15 | 3 | 2 |
+| Ben Sheppard | 18 | 13 | 2 | 2 |
+
+### Lineup Accuracy
+- **LAL lineup matched**: Doncic/LeBron/Reaves are core of profile. Hayes at 36 min notable — high usage starter.
+- **IND: Siakam 30 min/20 pts** — pre-game analysis noted IND 95% coverage and Zubac Out injury adj. Siakam played 30 solid minutes. Jay Huff (18/6) likely filled Zubac's center role.
+- Nembhard (19 assists!) carried the IND offense — not a star RAPM player but playmaking was crucial to keeping it close.
+
+### What the Model Got Right / Wrong
+1. **Direction correct (HIGH tier)** — LAL won as predicted. 5th straight HIGH tier directional WIN.
+2. **Margin compressed vs model** — predicted LAL by 10.2, actual by 7. IND's depth (5 players in double figures) kept it within single digits. Luka 43 pts wasn't enough to blow it open.
+3. **Zubac injury adj worked** — IND's 95% coverage gap was correctly attributed to Zubac. Jay Huff filled in and played well; the gap didn't expose the model to a big lineup mismatch.

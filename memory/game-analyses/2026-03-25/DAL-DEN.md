@@ -54,3 +54,54 @@ DAL is heavily depleted — no Luka Doncic, no Kyrie Irving in profile. Top play
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: DEN 142, DAL 135
+- Actual margin: DEN +7 (home_margin = 142−135 = +7)
+- Our spread: DEN +13.6 (model favored DEN) | Market: DEN −12.0 | Error: +6.6 pts (overestimated DEN)
+
+### Result
+- Directional: **WIN** — predicted DEN to win, DEN won by 7
+- ATS: **NO COVER** — market had DEN −12.0, DEN won by only 7 (5 pts short)
+
+### Actual Box Score
+
+**DEN**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Jamal Murray | 41 | 53 | 6 | 4 |
+| Nikola Jokic | 38 | 23 | 21 | 19 |
+| Cameron Johnson | 29 | 12 | 1 | 3 |
+| Peyton Watson | 23 | 21 | 4 | 3 |
+| Christian Braun | 25 | 11 | 3 | 4 |
+| Tim Hardaway Jr. | 27 | 4 | 1 | 2 |
+| Spencer Jones | 20 | 4 | 2 | 0 |
+| Bruce Brown | 20 | 6 | 2 | 1 |
+
+**DAL**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Cooper Flagg | 36 | 26 | 8 | 7 |
+| P.J. Washington | 31 | 19 | 15 | 1 |
+| Naji Marshall | 30 | 22 | 4 | 3 |
+| Max Christie | 32 | 9 | 1 | 2 |
+| Brandon Williams | 19 | 11 | 2 | 6 |
+| Khris Middleton | 18 | 11 | 3 | 5 |
+| Marvin Bagley III | 17 | 7 | 3 | 3 |
+| Dwight Powell | 16 | 7 | 4 | 0 |
+
+### Lineup Accuracy
+- **Jokic 23/21/19 triple-double** — his RAPM is well captured. Watson (21 pts off bench) was a positive surprise.
+- **Murray 53 pts** — extraordinary performance for a B2B. DEN still barely won.
+- **DAL fought hard**: Cooper Flagg (26/8/7 as rookie), PJ Washington 19/15, Marshall 22 — DAL's depleted roster competed surprisingly well. Pre-game file noted DAL 89% coverage gap; their available players overperformed.
+- DEN B2B fatigue showed in the margin — won by only 7 despite Murray 53 + Jokic triple-double.
+
+### What the Model Got Right / Wrong
+1. **Direction correct (HIGH tier)** — DEN wins as predicted.
+2. **B2B compression confirmed**: Model predicted DEN by 13.6 (after B2B penalty applied), market said 12.0, actual was 7. The B2B fatigue effect was real even with elite performances from Murray and Jokic.
+3. **DAL overperformed**: Model had DAL at 89% coverage — their available roster (Flagg/Washington/Marshall) performed better than their RAPM suggested. This may reflect Flagg's rookie season underrating by RAPM.
+4. **Murray 53 shows individual variance**: Even a 53-point performance wasn't enough to blow out the game on a B2B. Star-heavy performance + fatigue = compressed margin.

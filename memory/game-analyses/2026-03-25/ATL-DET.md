@@ -110,3 +110,54 @@ calibrated_naive = 6.097 * 0.475 + 3.500 = 2.896 + 3.500 = +6.40 pts
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: ATL 130 @ DET 129
+- Actual margin: ATL +1 (DET lost by 1)
+- Our spread: DET −4.46 | Market: DET −2.5 | Error: +5.5 pts (overestimated DET)
+
+### Result
+- Directional: **LOSS** — predicted DET to win, ATL won by 1
+- ATS: **NO COVER** — market had DET −2.5, DET lost outright
+
+### Actual Box Score
+
+**ATL**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Dyson Daniels | 43 | 16 | 13 | 4 |
+| Jalen Johnson | 42 | 27 | 8 | 12 |
+| Nickeil Alexander-Walker | 40 | 21 | 4 | 3 |
+| CJ McCollum | 35 | 27 | 1 | 5 |
+| Jock Landale | 28 | 5 | 10 | 2 |
+| Onyeka Okongwu | 24 | 11 | 1 | 2 |
+| Jonathan Kuminga | 20 | 8 | 5 | 1 |
+| Corey Kispert | 12 | 5 | 4 | 2 |
+
+**DET**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Daniss Jenkins | 45 | 19 | 3 | 10 |
+| Jalen Duren | 42 | 26 | 14 | 3 |
+| Ausar Thompson | 37 | 18 | 4 | 5 |
+| Tobias Harris | 35 | 22 | 3 | 3 |
+| Duncan Robinson | 32 | 17 | 7 | 4 |
+| Kevin Huerter | 20 | 8 | 2 | 2 |
+| Caris LeVert | 15 | 4 | 5 | 2 |
+| Javonte Green | 15 | 7 | 3 | 2 |
+
+### Lineup Accuracy
+- **Cade Cunningham confirmed absent** — not in box score at all. Pre-game analysis correctly flagged this as the critical swing factor. Effective DET team was replacement-level without him.
+- **Isaiah Stewart absent** — Fix B correctly excluded him; not in box score.
+- **Marcus Sasser absent** — ESPN Out, correctly excluded.
+- **ATL lineup matched exactly** — Jalen Johnson (11 games, high share) delivered 27/8/12. Kuminga (8 games, moderate) played 20 min off bench.
+- DET rotation without Cade: Jenkins/Duren/Harris/Thompson/Robinson matched our profile almost exactly.
+
+### What the Model Got Right / Wrong
+1. **Model correctly identified Cade as the key risk** — pre-game analysis explicitly said "do not bet before confirming Cade's status." Without Cade, the model's +4.46 spread collapsed to roughly +0 on the adjusted estimate. DET lost by 1 — nearly a push.
+2. **ATL's Jalen Johnson (27/8/12) delivered** — he had 12/15 games in profile, flagged as moderate sparsity. His minutes showed he was fully healthy and active.
+3. **Direction miss by 1 pt** — DET lost by exactly 1 in a near-coin-flip game. With Cade out, both model and market were roughly right that this was a pick-em.

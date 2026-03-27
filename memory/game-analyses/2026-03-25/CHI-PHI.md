@@ -128,3 +128,49 @@ Combined star OVR missing from model: +7.69 pts/100. If any 2-3 of these players
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: PHI 157, CHI 137
+- Actual margin: PHI +20 (home wins; home_margin = +20)
+- Our spread: CHI −1.2 (model favored CHI) | Market: PHI −6.5 | Error: −21.2 pts
+
+### Result
+- Directional: **LOSS** — model predicted CHI, PHI won by 20
+- ATS: **PHI COVER** — market PHI −6.5, PHI won by 20. Easy cover.
+
+### Actual Box Score
+
+**PHI**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Joel Embiid | 28 | 35 | 6 | 7 |
+| Paul George | 26 | 28 | 6 | 4 |
+| VJ Edgecombe | 30 | 22 | 6 | 6 |
+| Cameron Payne | 24 | 15 | 4 | 3 |
+| Quentin Grimes | 31 | 13 | 6 | 5 |
+| Dominick Barlow | 26 | 9 | 5 | 5 |
+| Trendon Watford | 15 | 4 | 2 | 1 |
+| Adem Bona | 15 | 4 | 8 | 0 |
+
+**CHI**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Josh Giddey | 33 | 23 | 9 | 12 |
+| Matas Buzelis | 30 | 18 | 8 | 2 |
+| Tre Jones | 28 | 15 | 4 | 7 |
+| Isaac Okoro | 23 | 13 | 2 | 1 |
+| Rob Dillingham | 23 | 12 | 2 | 1 |
+| Leonard Miller | 21 | 15 | 7 | 2 |
+
+### Lineup Accuracy
+- **Embiid (35 pts) and Paul George (28 pts) BOTH played** — pre-game analysis explicitly identified this as the critical risk: "if 2+ PHI stars active tonight, PHI -6.5 aligns with market logic." Both were active and destroyed CHI, yet were completely absent from our 15-game model window (13 and 15 consecutive DNPs respectively).
+- **CHI lineup matched exactly** — Giddey/Buzelis/Jones/Dillingham all appeared as profiled.
+
+### What the Model Got Right / Wrong
+1. **Adverse edge warning was 100% correct** — pre-game file explicitly said "the -7.7 adverse edge is a warning signal, not a contrarian edge. Do not bet CHI." Correct call. PHI won by 20.
+2. **Star-return blind spot confirmed** — Embiid + George combined for 63 pts. Model saw two replacement-level rosters; market correctly priced in returning stars. This is the Fix A long-return-window problem at its worst: players missing 13-15 games are genuinely invisible to the model.
+3. **Lesson: adverse edge ≥ 4 pts = do not bet against market** — validated again here. Market intelligence on star returns is reliable.

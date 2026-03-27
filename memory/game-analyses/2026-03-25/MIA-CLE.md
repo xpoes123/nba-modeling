@@ -147,3 +147,50 @@ This is unusual and worth noting. CLE's home-court advantage by calibration is n
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: MIA 120, CLE 103
+- Actual margin: CLE −17 (home_margin = 103−120 = −17)
+- Our spread: CLE +2.83 (model favored CLE) | Market: CLE −2.5 | Error: +19.8 pts (overestimated CLE by ~20)
+
+### Result
+- Directional: **LOSS** — predicted CLE to win, MIA won by 17
+- ATS: **NO COVER** — market had CLE −2.5, CLE lost outright
+
+### Actual Box Score
+
+**MIA**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Norman Powell | 34 | 19 | 4 | 2 |
+| Bam Adebayo | 33 | 17 | 10 | 7 |
+| Tyler Herro | 30 | 18 | 2 | 4 |
+| Pelle Larsson | 34 | 14 | 5 | 2 |
+| Andrew Wiggins | 24 | 12 | 3 | 2 |
+| Kel'el Ware | 20 | 13 | 11 | 4 |
+| Jaime Jaquez Jr. | 19 | 14 | 2 | 5 |
+| Davion Mitchell | 32 | 11 | 2 | 3 |
+
+**CLE**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Donovan Mitchell | 33 | 28 | 6 | 4 |
+| James Harden | 43 | 18 | 9 | 7 |
+| Sam Merrill | 29 | 18 | 2 | 4 |
+| Keon Ellis | 37 | 17 | 2 | 1 |
+| Evan Mobley | 31 | 8 | 5 | 4 |
+| Dennis Schroder | 28 | 4 | 6 | 6 |
+
+### Lineup Accuracy
+- CLE lineup matched: Donovan Mitchell (28 pts) showed up, but the rest of the lineup was average at best. Harden 43 min was heavy load.
+- Pre-game file noted CLE's B2B status AND CLE's near-zero home court coefficient. Both were red flags.
+- MIA lineup: Powell/Herro/Adebayo/Ware were well-balanced — 4 contributors in double figures each.
+
+### What the Model Got Right / Wrong
+1. **B2B effect massively underestimated** — the pre-game analysis noted CLE on a B2B but also noted the file stored a +2.83 spread (CLE favored) after the −3.05 B2B penalty. Actual result: CLE lost by 17, a 20-pt swing from our prediction. The −3.05 B2B coefficient is clearly insufficient for capturing full fatigue effects on teams that played tight games the night before.
+2. **CLE's near-zero HCA** — the file correctly noted CLE has near-zero home court advantage by calibration. On a B2B, this means no home boost to offset fatigue.
+3. **B2B calibration gap**: This is the 2nd time this season we've seen a B2B home team lose badly when the model still predicts them as favorites (with B2B penalty applied). The −3.05 coefficient should probably be larger for home teams on short rest.

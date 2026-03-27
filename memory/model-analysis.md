@@ -566,7 +566,7 @@ instead of 1.0 full-pool). Getting 15 more game directions right (687→702) is 
 
 MAE=5.56, RMSE=7.28, Corr=0.846, Dir=8/9 (88.9%).
 
-**GSW @ ATL deep dive:** → [Full analysis](game-analyses/2026-03-21-GSW-ATL.md)
+**GSW @ ATL deep dive:** → [Full analysis](game-analyses/2026-03-21/GSW-ATL.md)
 Model predicted ATL +0.86 (home margin). Closing market: ATL -9.5. Actual: ATL +16.
 Root causes: (1) ATL depth drag — Okongwu/Risacher/Landale/Kispert hold 39% of possessions
 at −1 to −2.5 overall, diluting team OFF to only +0.268. (2) Formula near-cancellation —
@@ -634,4 +634,35 @@ Notable misfires: MIL@UTA (−34.6), TOR@CHI (+28.4), MIA@CHA (−27.6), PHI@DEN
 - **Key pattern — star individual lines overcome by depth**: HOU@CHI — Durant 40 + Sengun 33/13/10, still lost. RAPM stars producing individually ≠ team win when depth is a mismatch.
 - **Giannis/injury intelligence gap**: MIL@LAC: Giannis sat (pre-game correctly flagged as risk). LAC@MIL: market had -13, we had -8.6. Market -4.38 gap was correct signal — market knew Giannis out. Similar for PHI@OKC: market knew Maxey+Embiid out.
 - **Recency artifact confirmed**: TOR@UTA — Markkanen appeared at 13.7% with 1 game but DNP'd. Error inflated by ~+8 pts. Kennedy Chandler (1/15) was real this time (29 min). Sparse = noise for players who happened to play 1 game; need better sparse filtering.
-- **Full analyses:** [LAL@DET](game-analyses/2026-03-23-LAL-DET.md) | [IND@ORL](game-analyses/2026-03-23-IND-ORL.md) | [SAS@MIA](game-analyses/2026-03-23-SAS-MIA.md) | [OKC@PHI](game-analyses/2026-03-23-OKC-PHI.md) | [MEM@ATL](game-analyses/2026-03-23-MEM-ATL.md) | [HOU@CHI](game-analyses/2026-03-23-HOU-CHI.md) | [TOR@UTA](game-analyses/2026-03-23-TOR-UTA.md) | [GSW@DAL](game-analyses/2026-03-23-GSW-DAL.md) | [BKN@POR](game-analyses/2026-03-23-BKN-POR.md) | [MIL@LAC](game-analyses/2026-03-23-MIL-LAC.md)
+- **Full analyses:** [LAL@DET](game-analyses/2026-03-23/LAL-DET.md) | [IND@ORL](game-analyses/2026-03-23/IND-ORL.md) | [SAS@MIA](game-analyses/2026-03-23/SAS-MIA.md) | [OKC@PHI](game-analyses/2026-03-23/OKC-PHI.md) | [MEM@ATL](game-analyses/2026-03-23/MEM-ATL.md) | [HOU@CHI](game-analyses/2026-03-23/HOU-CHI.md) | [TOR@UTA](game-analyses/2026-03-23/TOR-UTA.md) | [GSW@DAL](game-analyses/2026-03-23/GSW-DAL.md) | [BKN@POR](game-analyses/2026-03-23/BKN-POR.md) | [MIL@LAC](game-analyses/2026-03-23/MIL-LAC.md)
+
+---
+
+### Post-Mortem: 2026-03-24
+- **Games:** 4 predicted, 4 completed | **Directional:** 4-0 (100%) | **MAE:** 8.43 pts
+- **ATS (our spread):** 3-1 (SAC@CHA ✓, ORL@CLE ✓, DEN@PHX ✓, NOP@NYK ✗) | **ATS (market spread):** 1-3 (only SAC@CHA covered market)
+- **Biggest miss:** SAC@CHA — predicted CHA –15.01, actual CHA +44 (error –28.99) — classic blowout compression; both Achiuwa and Hayes scratched day-of, SAC was historically depleted
+- **Best predictions:** ORL@CLE (error –0.48) and DEN@PHX (error +0.84) — both LOW SIGNAL games where market was off by 5–6 pts and our number was essentially exact
+- **Directional wins:** SAC@CHA ✓, NOP@NYK ✓, ORL@CLE ✓, DEN@PHX ✓
+- **Key pattern — two LOW SIGNAL games were the best predictions:** ORL@CLE (–0.48 error) and DEN@PHX (+0.84 error) were our two most accurate predictions. Both were flagged LOW SIGNAL. Market was badly wrong on both (CLE –10.5 vs actual +5; DEN –5 vs actual –2). When LOW SIGNAL is driven by a known structural factor (HCA coefficient, confirmed injury exclusion) rather than pure noise, the model number can still be informative — even if not bet-worthy.
+- **Key pattern — blowout compression again (SAC@CHA):** SAC had 4 season-ending absences + Achiuwa + Hayes both scratched day-of. CHA won by 44. Direction correct; magnitude off by 29 pts. Market (–17) was also badly wrong. When coverage ≤80% AND day-of questionables scratch, the outcome is typically a blowout far exceeding any model.
+- **Key pattern — PHX HCA validated:** PHX HCA = +5.63 (highest in our calibration). DEN (Jokic, Murray) is far superior on talent but won by only 2 on the road. The PHX home environment is real. Do not dismiss the HCA coefficient as a calibration artifact.
+- **Key pattern — Jeremiah Fears model outlier (NOP@NYK):** Fears rated –1.42 overall but scored 21 pts in 20 min off the bench. Negative RAPM likely reflects context (bad lineups) not individual skill. Worth watching going forward.
+- **Full analyses:** [SAC@CHA](game-analyses/2026-03-24/SAC-CHA.md) | [NOP@NYK](game-analyses/2026-03-24/NOP-NYK.md) | [ORL@CLE](game-analyses/2026-03-24/ORL-CLE.md) | [DEN@PHX](game-analyses/2026-03-24/DEN-PHX.md)
+
+---
+
+### Post-Mortem: 2026-03-25
+- **Games:** 12 predicted | **Directional:** 7-5 (58.3%) | **HIGH tier directional:** 5-0 (100%) | **HIGH tier ATS:** 2-3 | **MAE (all):** 13.5 pts | **MAE (HIGH only):** 10.1 pts
+- **Biggest miss:** WAS@UTA — predicted UTA +7.85, actual WAS +23 (error +29.7 pts). UTA lost by 23 despite model seeing them as a 7.85-pt home favorite.
+- **Best prediction:** HOU@MIN — predicted MIN +1.2, actual MIN +2 (error −0.8 pts). Near-perfect. Also correctly flipped direction vs market (market had HOU −1.5).
+- **Directional wins (7):** OKC@BOS ✓, SAS@MEM ✓, LAL@IND ✓, HOU@MIN ✓, DAL@DEN ✓, BKN@GSW ✓, MIL@POR ✓
+- **Directional losses (5):** ATL@DET ✗, MIA@CLE ✗, CHI@PHI ✗, TOR@LAC ✗, WAS@UTA ✗
+- **HIGH tier went 5-0 directional** (LAL, SAS, DEN, GSW, POR) — consistent with 86% historical accuracy. All 5 correct.
+- **Key pattern — adverse edge ≥4 pts = market knows, do not bet against**: CHI@PHI (edge −7.68, PHI won by 20 — Embiid/George both returned), TOR@LAC (edge −4.71, LAC won by 25 — Kawhi/Garland both active). Pre-game files correctly identified both as "do not bet" situations. Model missed returning stars on both — same Fix A / long-return-window blind spot.
+- **Key pattern — blowout compression on large mismatches**: SAS@MEM (pred −14.5, actual −25), MIL@POR (pred +10.4, actual +31). 4th and 5th data points confirming this pattern. Model undershoots blowout magnitude by 10-20 pts consistently.
+- **Key pattern — B2B coefficient underestimates fatigue**: MIA@CLE — CLE on B2B, model gave −3.05 penalty, CLE lost by 17 (miss of 19.8 pts). This is the 2nd time a B2B home team lost badly when model still predicted them as favorites post-penalty. The −3.05 coefficient may need upward adjustment.
+- **Key pattern — HIGH tier coverage gap risk**: BKN@GSW — model predicted GSW blowout (−12.3), GSW barely won by 3. BKN had 79% coverage (unknown players competed hard). When HIGH tier games have coverage < 85% for one team, treat as MODERATE confidence — elevated sim_std (14.35) was the warning signal.
+- **Key pattern — individual game variance from bad-rated players**: WAS@UTA — Riley (−3.04 RAPM) 19/10, Carrington (−4.20 RAPM) 12 pts. Worst-rated players can have career nights. Avoid fading bad teams on spread when they're getting 7+ pts.
+- **Star-heavy team vs. depth pattern**: HOU had Durant 30 + Sengun 30 (likely OT), still lost to MIN's balanced attack. Confirmed pattern from 3/23.
+- **Full analyses:** [ATL@DET](game-analyses/2026-03-25/ATL-DET.md) | [LAL@IND](game-analyses/2026-03-25/LAL-IND.md) | [CHI@PHI](game-analyses/2026-03-25/CHI-PHI.md) | [OKC@BOS](game-analyses/2026-03-25/OKC-BOS.md) | [MIA@CLE](game-analyses/2026-03-25/MIA-CLE.md) | [SAS@MEM](game-analyses/2026-03-25/SAS-MEM.md) | [WAS@UTA](game-analyses/2026-03-25/WAS-UTA.md) | [HOU@MIN](game-analyses/2026-03-25/HOU-MIN.md) | [DAL@DEN](game-analyses/2026-03-25/DAL-DEN.md) | [BKN@GSW](game-analyses/2026-03-25/BKN-GSW.md) | [MIL@POR](game-analyses/2026-03-25/MIL-POR.md) | [TOR@LAC](game-analyses/2026-03-25/TOR-LAC.md)

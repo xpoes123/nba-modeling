@@ -52,3 +52,51 @@ Team OFF=+0.40  DEF=-0.16  Net=+0.56
 
 ---
 <!-- POST-MORTEM APPENDED BELOW AFTER GAME COMPLETES -->
+
+---
+
+## Post-Mortem
+
+### Actual Outcome
+- Final score: LAC 119, TOR 94
+- Actual margin: LAC +25 (home_margin = 119−94 = +25)
+- Our spread: TOR −1.2 (model favored TOR away) | Market: LAC −3.5 | Error: −26.2 pts
+
+### Result
+- Directional: **LOSS** — model predicted TOR, LAC won by 25
+- ATS: **LAC COVER** — market had LAC −3.5, LAC won by 25. Easy cover.
+
+### Actual Box Score
+
+**LAC**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Kawhi Leonard | 30 | 27 | 6 | 2 |
+| Darius Garland | 30 | 24 | 4 | 6 |
+| Bennedict Mathurin | 27 | 23 | 4 | 6 |
+| Brook Lopez | 25 | 14 | 5 | 0 |
+| Isaiah Jackson | 23 | 12 | 6 | 3 |
+| Kris Dunn | 24 | 0 | 5 | 4 |
+| Derrick Jones Jr. | 28 | 2 | 7 | 0 |
+| John Collins | 22 | 0 | 5 | 0 |
+
+**TOR**
+| Player | Min | Pts | Reb | Ast |
+|--------|-----|-----|-----|-----|
+| Brandon Ingram | 36 | 18 | 6 | 4 |
+| RJ Barrett | 32 | 12 | 6 | 4 |
+| Scottie Barnes | 31 | 9 | 8 | 12 |
+| Jamal Shead | 31 | 8 | 0 | 4 |
+| Jakob Poeltl | 22 | 10 | 6 | 1 |
+| Collin Murray-Boyles | 24 | 10 | 5 | 0 |
+
+### Lineup Accuracy
+- **Kawhi Leonard (27 pts, 30 min) played** — pre-game file correctly said "confirm Kawhi is active." He was, and he dominated. He's listed at 12/15 games in our profile; this was a game where he was fully active.
+- **Darius Garland (24 pts)** — not in the analyze-game file as a core LAC player. Likely a recent mid-season acquisition our profile had but may not have fully weighted.
+- **TOR lineup matched**: Ingram/Barrett/Barnes all appeared as profiled. Ingram (65.6% share, −1.22 overall) played 36 min and had 18 pts — his negative RAPM is real but he still contributes to totals.
+- Pre-game flagged adverse edge of -4.71 and Kawhi's status — market was right.
+
+### What the Model Got Right / Wrong
+1. **Adverse edge warning validated** — pre-game file said "Actionable? NO — LOW SIGNAL + adverse edge." Correct call. The -4.71 adverse edge crossed our 4-pt threshold for market intelligence signal.
+2. **Model missed Kawhi + Garland combo**: LAC had 3 contributors in 20+ pts (Kawhi 27, Garland 24, Mathurin 23). TOR had no answer. Our model's LAC team ratings didn't fully capture this trio.
+3. **Lesson**: When our model slightly favors the away team but market has home team at −3.5 to −4.0, the model is likely missing a healthy star or rotation upgrade on the home side. This is the same pattern as CHI-PHI (model missed Embiid/George) applied to a lower-tier game.

@@ -13,7 +13,7 @@ Before doing anything, check which games on this date have predictions logged an
 
 1. Query: `SELECT game_id, home_team_id, away_team_id FROM games WHERE game_date='{DATE}'`
    Cross-reference with `predictions` table to find games we predicted on.
-2. For each predicted game, check if `memory/game-analyses/{DATE}-{AWAY}-{HOME}.md` exists.
+2. For each predicted game, check if `memory/game-analyses/{DATE}/{AWAY}-{HOME}.md` exists.
 
 **If any predicted games are missing an analyze-game file:**
 - List them explicitly to David: "Missing pre-game analysis for: [GAME1], [GAME2]"
@@ -70,7 +70,7 @@ Return everything as structured text organized by game.
 
 ## Phase 3 — Append Post-Mortem to Each Analyze-Game File
 
-For each game, read the existing `memory/game-analyses/{DATE}-{AWAY}-{HOME}.md` and append the following section at the bottom (after the `<!-- POST-MORTEM APPENDED BELOW -->` marker):
+For each game, read the existing `memory/game-analyses/{DATE}/{AWAY}-{HOME}.md` and append the following section at the bottom (after the `<!-- POST-MORTEM APPENDED BELOW -->` marker):
 
 ```markdown
 ---

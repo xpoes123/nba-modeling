@@ -88,7 +88,7 @@ Ask:
 ## Phase 3 — Write the Analysis File
 
 After the full conversation, write all findings + David's inputs to:
-`memory/game-analyses/{DATE}-{AWAY}-{HOME}.md`
+`memory/game-analyses/{DATE}/{AWAY}-{HOME}.md`
 
 Format:
 

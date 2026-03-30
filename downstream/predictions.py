@@ -12,6 +12,7 @@ Injury source: BDL (best-effort; skipped gracefully if unavailable or on free ti
 Odds source: Odds API.
 """
 import argparse
+import json
 import logging
 import math
 import sqlite3
@@ -59,6 +60,48 @@ from downstream.team_ratings import (
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Team style cluster display (from downstream/cluster_model_meta.json)
+# Loaded once at import time; silently disabled if the file doesn't exist yet.
+# ---------------------------------------------------------------------------
+
+_CLUSTER_META_PATH = Path(__file__).parent / "cluster_model_meta.json"
+
+
+def _load_cluster_display() -> tuple[dict[str, int], dict[int, str]]:
+    """Return (team_id → cluster_id, cluster_id → short_name) from meta JSON.
+
+    Short names strip the 'Cluster N — ' prefix so they fit on one line.
+    Returns empty dicts if the meta file doesn't exist or fails to parse.
+    """
+    if not _CLUSTER_META_PATH.exists():
+        return {}, {}
+    try:
+        with open(_CLUSTER_META_PATH, encoding="utf-8") as f:
+            meta = json.load(f)
+        team_to_cluster: dict[str, int] = {
+            tid: int(cid) for tid, cid in meta.get("cluster_by_team_id", {}).items()
+        }
+        cluster_to_name: dict[int, str] = {}
+        for k, v in meta.get("cluster_names", {}).items():
+            short = v.split("\u2014", 1)[-1].strip() if "\u2014" in v else v
+            cluster_to_name[int(k)] = short
+        return team_to_cluster, cluster_to_name
+    except Exception:
+        return {}, {}
+
+
+_TEAM_TO_CLUSTER, _CLUSTER_TO_NAME = _load_cluster_display()
+
+
+def _style_label(team_id: str) -> str | None:
+    """Return a short style label for a team, or None if cluster data is unavailable."""
+    cid = _TEAM_TO_CLUSTER.get(team_id)
+    if cid is None:
+        return None
+    return _CLUSTER_TO_NAME.get(cid)
+
 
 # Number of recent team games to use for possession-share estimation
 _LINEUP_LOOKBACK_GAMES = 15
@@ -667,6 +710,13 @@ def _print_report(predictions: list[dict], target_date: date, injuries_available
 
         print(f"\n{away} @ {home}")
 
+        home_style = p.get("home_style")
+        away_style = p.get("away_style")
+        if home_style or away_style:
+            away_label = f"[{away_style}]" if away_style else ""
+            home_label = f"[{home_style}]" if home_style else ""
+            print(f"  Style    : {_abbrev(away)} {away_label} @ {_abbrev(home)} {home_label}")
+
         spread_line = f"  Spread   : Our {our_spread_str} ± {sim_std:.1f}"
         if sigma_inj > 0.5:
             spread_line += f" (inj+{sigma_inj:.1f})"
@@ -904,6 +954,9 @@ def run_predictions(
                 "away_team_id": away_nba_id,
                 "home_team_name": home_name,
                 "away_team_name": away_name,
+                # Style labels — display only, not stored in DB
+                "home_style": _style_label(home_nba_id),
+                "away_style": _style_label(away_nba_id),
                 "predicted_spread": round(predicted_spread, 2),
                 "predicted_win_prob": round(predicted_win_prob, 4),
                 "sim_std": round(total_sigma, 2),  # total uncertainty (calibration + injury + lineup)

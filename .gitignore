@@ -5,6 +5,9 @@
 # pbpstats local cache
 data/
 
+# WNBA data pull output (local artifacts: parquet/csv exports, logs, zip)
+wnba_data/
+
 # Python
 __pycache__/
 *.pyc
